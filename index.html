@@ -128,6 +128,32 @@ td.r,th.r{text-align:right;white-space:nowrap}
 .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.stats div{background:var(--bg);border-radius:10px;padding:10px}
 .stats .num{font-size:1.9rem;line-height:1}
 @media (prefers-reduced-motion:no-preference){#sheet>.card{animation:up .18s ease-out}@keyframes up{from{transform:translateY(24px)}to{transform:none}}}
+/* route map: a plain drawn line first, street tiles fade in over it when they load */
+.route{position:relative;height:220px;flex-shrink:0;border-radius:12px;overflow:hidden;background:var(--chip)}
+.route>svg{width:100%;height:100%;display:block}
+.rmap{position:absolute;inset:0;z-index:1;opacity:0;transition:opacity .25s;background:var(--chip)}.rmap.on{opacity:1}.route:has(.rmap.on)>svg{visibility:hidden}
+.rmap.dark .leaflet-control-attribution{background:rgba(0,0,0,.6);color:#bbb}.rmap.dark .leaflet-control-attribution a{color:#6DB3F2}
+.rmap>.m{position:absolute;inset:0}.rmap.dark .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) brightness(.85) contrast(.9)}
+.rmap>.chip{position:absolute;top:10px;right:10px;z-index:1000;box-shadow:0 1px 4px rgba(0,0,0,.25);background:var(--surface)}
+#mapfull{position:fixed;inset:0;z-index:25;background:var(--chip)}#mapfull[hidden]{display:none}
+#mapfull .rmap>.chip{top:calc(12px + env(safe-area-inset-top,0px));right:max(12px,env(safe-area-inset-right,0px))}
+.rkey{display:flex;gap:16px;margin-top:-6px}.rkey i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:-1px}
+/* the parts of Leaflet's stylesheet this map uses */
+.leaflet-pane,.leaflet-tile,.leaflet-marker-icon,.leaflet-tile-container,.leaflet-pane>svg,.leaflet-pane>canvas,.leaflet-zoom-box,.leaflet-layer{position:absolute;left:0;top:0}
+.leaflet-container{overflow:hidden;-webkit-tap-highlight-color:transparent;outline:0;font:11px/1.4 var(--body)}
+.leaflet-tile{user-select:none;-webkit-user-drag:none;visibility:hidden}.leaflet-tile-loaded{visibility:inherit}
+.leaflet-container img.leaflet-tile{max-width:none!important;max-height:none!important;width:auto;padding:0}
+.leaflet-container .leaflet-overlay-pane svg{max-width:none!important;max-height:none!important}
+.leaflet-pane{z-index:400}.leaflet-tile-pane{z-index:200}.leaflet-overlay-pane{z-index:400}.leaflet-marker-pane{z-index:600}
+.leaflet-zoom-box{z-index:800}.leaflet-zoom-hide{visibility:hidden}
+.leaflet-zoom-animated{transform-origin:0 0}
+.leaflet-zoom-anim .leaflet-zoom-animated{transition:transform .25s cubic-bezier(0,0,.25,1)}
+.leaflet-zoom-anim .leaflet-tile,.leaflet-pan-anim .leaflet-tile{transition:none}
+.leaflet-container.leaflet-touch-zoom{touch-action:pan-x pan-y}
+.leaflet-container.leaflet-touch-drag,.leaflet-container.leaflet-touch-drag.leaflet-touch-zoom{touch-action:none}
+.leaflet-control-container .leaflet-bottom{position:absolute;bottom:0;z-index:1000;pointer-events:none}.leaflet-right{right:0}
+.leaflet-control{position:relative;pointer-events:auto;float:right;clear:both}
+.leaflet-control-attribution{background:rgba(255,255,255,.75);color:#333;padding:0 5px;font-size:10px}.leaflet-control-attribution a{color:#0F4C81}
 </style>
 
 <div id="app"></div>
@@ -802,9 +828,10 @@ function stepHtml(s,p,sp){
   const z=[t?`${t.name}: ${t.text}`:'',s.rest?s.rest+'s rest':'',s.note||''].filter(Boolean).join(' · ');
   return`<div class="step"><span class="t">${esc(s.n)}</span><span class="q">${esc(q)}</span>${z?`<span class="z">${esc(z)}</span>`:''}</div>`}
 function viewSheet(){const{wk,i,w}=findW(ui.sheet),p=heatP(w),d=describe(w,wk,p),lg=S.log[w.id],date=w.date||addDays(wkStart(i),w.d),dist=estDist(w,d,p);
+  const route=(ui.logging&&ui.logging.route)||(lg&&lg.route)||null;curRoute=route;
   const label=w.sp==='brick'?'Brick':w.sp==='race'?(w.k==='prac'?'Practice race':'Race day'):w.sp[0].toUpperCase()+w.sp.slice(1);
   let h=`<div class="card c-${w.sp}"><div class="row"><div class="grow stack" style="gap:2px"><span class="label" style="color:var(--c)">${label} · ${fmtDate(date)}${w.date?'':' · Week '+(i+1)}</span><h2>${esc(d.title)}</h2></div><button class="chip" data-act="close" aria-label="Close">✕</button></div>
-    <div class="row"><span class="num" style="font-size:1.6rem">${w.k==='prac'?'Rehearsal':w.sp==='race'?fmtT(racePred(p).total):fmtDur(w.min+(w.x||0))}</span>${dist?`<span class="muted">${dist}</span>`:''}${lg?`<span class="pill">${lg.s==='done'?'Done':'Skipped'}</span>`:''}</div><p class="muted">${esc(d.why)}</p><div class="steps">${d.steps.map(s=>stepHtml(s,p,w.sp)).join('')}</div>`;
+    <div class="row"><span class="num" style="font-size:1.6rem">${w.k==='prac'?'Rehearsal':w.sp==='race'?fmtT(racePred(p).total):fmtDur(w.min+(w.x||0))}</span>${dist?`<span class="muted">${dist}</span>`:''}${lg?`<span class="pill">${lg.s==='done'?'Done':'Skipped'}</span>`:''}</div>${route?routeBlock(route):''}<p class="muted">${esc(d.why)}</p><div class="steps">${d.steps.map(s=>stepHtml(s,p,w.sp)).join('')}</div>`;
   if(ui.logging){const L=ui.logging,test=w.k==='test';
     h+=`<div class="stack" style="border-top:1px solid var(--line);padding-top:14px"><h3>Log this workout</h3>${test?`<label class="field"><span>${w.sp==='swim'?'400 time (m:ss)':w.sp==='run'?'5K time (m:ss)':'20-minute average power (watts)'}</span><input type="text" inputmode="numeric" ${w.sp!=='bike'?'data-time="1"':''} id="l-res" data-l="result" value="${esc(L.result)}" placeholder="${w.sp==='bike'?'e.g. 232':'e.g. '+(w.sp==='swim'?'7:10':'24:50')}"></label>`:''}
       <div class="row"><label class="field"><span>Minutes</span><input type="text" inputmode="numeric" id="l-min" data-l="min" value="${esc(L.min)}"></label><label class="field"><span>Distance (optional)</span><input type="text" id="l-dist" data-l="dist" value="${esc(L.dist)}" placeholder="${w.sp==='swim'?'2000 '+p.pool:'6.2 '+p.units}"></label></div>
@@ -830,8 +857,8 @@ function render(){const app=$('#app'),nav=$('#nav'),sheet=$('#sheet');
   nav.hidden=false;nav.innerHTML='<div>'+tabs.map(([k,l])=>`<button data-act="tab" data-v="${k}" ${NATIVE?'style="font-size:.84rem"':''} ${ui.tab===k?'aria-current="page"':''}>${l}</button>`).join('')+'</div>';
   app.innerHTML={today:viewToday,plan:viewPlan,paces:viewPaces,progress:viewProgress,settings:viewSettings,coach:viewCoach}[ui.tab]();
   if(ui.tab==='today'||ui.tab==='settings'){const V=appVer();app.insertAdjacentHTML('beforeend',`<p class="muted small" style="text-align:center;margin:20px 0 4px">Tripace ${V?'version '+esc(fmtVer(V.v))+(V.src==='update'?' · updated over the air':''):'web version'}</p>`)}
-  if(ui.sheet){sheet.innerHTML=viewSheet();sheet.hidden=false}else sheet.hidden=true;
-  renderLive()}
+  if(ui.sheet){sheet.innerHTML=viewSheet();sheet.hidden=false}else{sheet.hidden=true;curRoute=null}
+  mountRoute();renderLive()}
 function finishWizard(){const D=ui.draft,mode=ui.wizMode;delete D.peakAuto;
   if(mode==='fit'){const o=S.profile;if(D.fit.runT!==o.fit.runT||D.fit.runD!==o.fit.runD){o.vAdj=0;o.vAdjPrev=null}if(D.fit.swimT!==o.fit.swimT||D.fit.swimD!==o.fit.swimD)o.cssAdj=0;S.profile.fit=D.fit;S.profile.bikeMode=D.bikeMode;derive(S.profile);ui.draft=null;save();toast('Paces updated');ui.tab='paces';return}
   const p=derive(JSON.parse(JSON.stringify(D)));
@@ -848,10 +875,10 @@ function act(a,el){const D=ui.draft,v=el.dataset.v;
     case'toggleWeek':{const i=+el.dataset.i,open=ui.openWeek??clamp(curWeek(),0,S.plan.weeks.length-1);ui.openWeek=open===i?-1:i;break}
     case'open':ui.sheet=el.dataset.id;ui.logging=null;break;
     case'close':ui.sheet=null;ui.logging=null;break;
-    case'logStart':{const{w}=findW(ui.sheet),lg=S.log[w.id]||{};ui.logging={min:lg.min||String(w.min+(w.x||0)),dist:lg.dist||'',rpe:lg.rpe||0,note:lg.note||'',result:lg.result||''};break}
+    case'logStart':{const{w}=findW(ui.sheet),lg=S.log[w.id]||{};ui.logging={min:lg.min||String(w.min+(w.x||0)),dist:lg.dist||'',rpe:lg.rpe||0,note:lg.note||'',result:lg.result||'',route:lg.route};break}
     case'logCancel':ui.logging=null;break;
     case'rpe':ui.logging.rpe=+v;break;
-    case'logSave':{const{w}=findW(ui.sheet),L=ui.logging;S.log[w.id]={s:'done',min:parseFloat(L.min)||w.min,dist:L.dist,rpe:L.rpe,note:L.note,result:L.result,at:today()};if(L.pr)S.log[w.id].pr=L.pr;
+    case'logSave':{const{w}=findW(ui.sheet),L=ui.logging;S.log[w.id]={s:'done',min:parseFloat(L.min)||w.min,dist:L.dist,rpe:L.rpe,note:L.note,result:L.result,at:today()};if(L.pr)S.log[w.id].pr=L.pr;if(L.route)S.log[w.id].route=L.route;
       let msg='Workout logged';
       if(w.k==='test'&&L.result){const f=S.profile.fit;if(w.sp==='swim'&&parseT(L.result)){f.swimD='400';f.swimT=L.result;S.profile.cssAdj=0;msg='Swim paces updated'}if(w.sp==='run'&&parseT(L.result)){f.runD='5000';f.runT=L.result;S.profile.vAdj=0;S.profile.vAdjPrev=null;msg='Run paces updated'}if(w.sp==='bike'&&parseFloat(L.result)){f.ftp=String(Math.round(parseFloat(L.result)*.95));msg='FTP set to '+f.ftp+' W'}derive(S.profile)}
       ui.logging=null;save();toast(msg);break}
@@ -896,6 +923,8 @@ function act(a,el){const D=ui.draft,v=el.dataset.v;
     case'runMode':S.profile.runMode=v;save();break;
     case'livePause':Android.pause();break;
     case'liveSkip':Android.skip();break;
+    case'mapFull':ui.mapFull=true;break;
+    case'mapClose':ui.mapFull=false;break;
     case'liveFinish':ui.live.confirm=true;break;
     case'liveFinishNo':ui.live.confirm=false;break;
     case'liveFinishYes':finishLive();break;
@@ -995,12 +1024,69 @@ function paceInsight(){const p=S.profile,cut=addDays(today(),-28),rs=Object.valu
     :{title:'Your targets look too fast',text:'Across your last '+rs.length+' hard runs you ran '+pct+'% slower than the target pace. Easing the targets keeps hard days productive instead of draining.',adj:p.vdot*(m-1)*.8}}
 function startPoll(){clearInterval(pollT);pollT=setInterval(()=>{if(!ui.live){clearInterval(pollT);return}let st;try{st=JSON.parse(Android.poll())}catch(e){return}
   if(!st.run){ui.live=null;lsSet('tripace.live',null);clearInterval(pollT);renderLive();return}ui.live.st=st;renderLive()},1000)}
+/* ---------- route map ---------- */
+// GPS track -> at most n points (Ramer–Douglas–Peucker, in metres), 5 decimals (about 1 m). Null when it never really went anywhere.
+function simplifyRoute(pts,n=300){if(!Array.isArray(pts)||pts.length<2)return null;
+  const kx=111320*Math.cos(pts[0][0]*Math.PI/180),ky=110540,xy=pts.map(q=>[q[1]*kx,q[0]*ky]),N=pts.length;
+  const xs=xy.map(p=>p[0]),ys=xy.map(p=>p[1]);if(Math.hypot(Math.max(...xs)-Math.min(...xs),Math.max(...ys)-Math.min(...ys))<60)return null;
+  const rdp=tol=>{const keep=new Uint8Array(N),st=[[0,N-1]];keep[0]=keep[N-1]=1;
+    while(st.length){const[a,b]=st.pop(),[ax,ay]=xy[a],dx=xy[b][0]-ax,dy=xy[b][1]-ay,L2=dx*dx+dy*dy;let md=-1,mi=-1;
+      for(let i=a+1;i<b;i++){const px=xy[i][0]-ax,py=xy[i][1]-ay,t=L2?clamp((px*dx+py*dy)/L2,0,1):0,ex=px-t*dx,ey=py-t*dy,dd=ex*ex+ey*ey;if(dd>md){md=dd;mi=i}}
+      if(md>tol*tol){keep[mi]=1;st.push([a,mi],[mi,b])}}
+    return pts.filter((_,i)=>keep[i])};
+  let tol=3,out=rdp(tol);while(out.length>n){tol*=1.6;out=rdp(tol)}
+  return out.map(q=>[+(+q[0]).toFixed(5),+(+q[1]).toFixed(5)])}
+// The route as a plain drawing: shown at once, and all there is offline.
+function routeSvg(r){const k=Math.cos(r[0][0]*Math.PI/180),xs=r.map(q=>q[1]*k),ys=r.map(q=>-q[0]),W=340,H=220,pad=18;
+  const x0=Math.min(...xs),y0=Math.min(...ys),sw=Math.max(...xs)-x0||1e-9,sh=Math.max(...ys)-y0||1e-9,s=Math.min((W-2*pad)/sw,(H-2*pad)/sh),ox=(W-sw*s)/2,oy=(H-sh*s)/2;
+  const P=r.map((q,i)=>[(xs[i]-x0)*s+ox,(ys[i]-y0)*s+oy]),d='M'+P.map(p=>p[0].toFixed(1)+' '+p[1].toFixed(1)).join('L'),a=P[0],b=P[P.length-1];
+  return`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Route map"><path d="${d}" fill="none" stroke="var(--c)" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="${b[0].toFixed(1)}" cy="${b[1].toFixed(1)}" r="6.5" fill="var(--ink)" stroke="var(--surface)" stroke-width="2.5"/><circle cx="${a[0].toFixed(1)}" cy="${a[1].toFixed(1)}" r="6.5" fill="var(--ok)" stroke="var(--surface)" stroke-width="2.5"/></svg>`}
+function routeKey(r){return r.length+':'+r[0].join()+':'+r[r.length-1].join()}
+function routeBlock(r){return`<div class="route" id="route-slot" data-key="${routeKey(r)}">${routeSvg(r)}</div>
+  <div class="rkey small muted"><span><i style="background:var(--ok)"></i>Start</span><span><i style="background:var(--ink)"></i>Finish</span></div>`}
+// Street tiles: Leaflet is fetched the first time a map is shown, so it costs nothing until then.
+let curRoute=null,rmap=null,leafletP=null;
+function loadLeaflet(){if(window.L&&L.map)return Promise.resolve(L);
+  if(!leafletP)leafletP=new Promise((ok,no)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js';
+    s.onload=()=>window.L&&L.map?ok(L):no();s.onerror=()=>{leafletP=null;s.remove();no()};document.head.appendChild(s)});return leafletP}
+function mountRoute(){const slot=$('#route-slot');
+  if(!slot||!curRoute){ui.mapFull=false;const f=$('#mapfull');if(f)f.hidden=true;return}
+  const key=slot.dataset.key;if(rmap&&rmap.key!==key){if(rmap.map)rmap.map.remove();rmap=null}
+  if(rmap){if(rmap.map)placeMap();return}
+  if(navigator.onLine===false)return;
+  rmap={key,loading:true};
+  loadLeaflet().then(L=>{const s=$('#route-slot'),r=curRoute;if(!rmap||rmap.key!==key)return;if(!s||s.dataset.key!==key){rmap=null;return}
+    const el=document.createElement('div');el.className='rmap';el.innerHTML='<div class="m"></div><button class="chip" data-act="mapFull">Expand</button>';s.appendChild(el);
+    const css=getComputedStyle(s),col=css.getPropertyValue('--c').trim()||'#0F4C81',okc=css.getPropertyValue('--ok').trim()||'#1B8553',ink=css.getPropertyValue('--ink').trim()||'#0F1E27',dark=getComputedStyle(document.documentElement).colorScheme==='dark';
+    if(dark)el.classList.add('dark');
+    const map=L.map(el.firstChild,{zoomControl:false,dragging:false,boxZoom:false,keyboard:false,scrollWheelZoom:'center',zoomSnap:.25,zoomDelta:.5}),bounds=L.latLngBounds(r),
+      fit=()=>map.fitBounds(bounds,{padding:[24,24],maxZoom:17,animate:false});
+    fit(); // the view has to exist before the line is added, or the line is never drawn
+    let got=0,bad=0;
+    const drop=()=>{if(got||!rmap||rmap.map!==map)return;map.remove();el.remove();rmap={key,failed:true};ui.mapFull=false;const f=$('#mapfull');if(f)f.hidden=true};
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'})
+      .on('tileload',()=>{got++;el.classList.add('on')}).on('tileerror',()=>{if(++bad>=4)drop()}).addTo(map);
+    L.polyline(r,{color:dark?'#000':'#fff',weight:8,opacity:.6,interactive:false}).addTo(map);
+    L.polyline(r,{color:col,weight:4.5,opacity:1,interactive:false}).addTo(map);
+    L.circleMarker(r[r.length-1],{radius:7,color:'#fff',weight:2.5,fillColor:ink,fillOpacity:1,interactive:false}).addTo(map);
+    L.circleMarker(r[0],{radius:7,color:'#fff',weight:2.5,fillColor:okc,fillOpacity:1,interactive:false}).addTo(map);
+    rmap={key,el,map,full:false,fit};
+    setTimeout(drop,10000);placeMap()}).catch(()=>{if(rmap&&rmap.key===key)rmap=null});}
+// The same map moves between the sheet and full screen, so zoom and tiles survive every redraw of the sheet.
+function placeMap(){const full=!!ui.mapFull;let host=$('#route-slot'),f=$('#mapfull');
+  if(full){if(!f){f=document.createElement('div');f.id='mapfull';document.body.appendChild(f)}host=f}
+  if(f)f.hidden=!full;if(!host)return;if(rmap.el.parentNode!==host)host.appendChild(rmap.el);
+  const m=rmap.map,b=rmap.el.querySelector('button');full?m.dragging.enable():m.dragging.disable();
+  b.dataset.act=full?'mapClose':'mapFull';b.textContent=full?'✕ Close':'Expand';
+  requestAnimationFrame(()=>{m.invalidateSize();if(rmap&&rmap.full!==full){rmap.full=full;rmap.fit()}})}
 function finishLive(){const p=S.profile,id=ui.live.id,LS=ui.live.steps,TR=ui.live.trainer;let st={};try{st=JSON.parse(Android.stop())}catch(e){}
   // how the pace actually held compares with the target, over the hard run steps only
   const rr=(st.steps||[]).map(a=>{const s=LS[a[0]];return s&&s.sp==='r'&&s.lo>0&&s.hi>0&&a[2]>=60&&a[1]>0?(a[1]/a[2])/((s.lo+s.hi)/2):0}).filter(x=>x>.7&&x<1.3),pr=rr.length?rr.reduce((a,b)=>a+b,0)/rr.length:0;
   clearInterval(pollT);ui.live=null;lsSet('tripace.live',null);const km=(st.dist||0)/1000,min=Math.max(1,Math.round((st.elapsed||0)/60));
   const{w}=findW(id);const avg=km>0.05?(w.sp==='run'?fmtT(st.elapsed/(km/KM(p)))+' /'+p.units:(km/KM(p)/(st.elapsed/3600)).toFixed(1)+' '+p.units+'/h'):'';
   ui.sheet=id;ui.logging={min:String(min),dist:km>0.05?(km/KM(p)).toFixed(2)+' '+p.units:'',rpe:0,note:avg?(TR?'Trainer':'GPS')+': average '+avg:'',result:'',pr};
+  if(!TR){const r=simplifyRoute(st.route);if(r)ui.logging.route=r}
   if(TR){const ps=(st.steps||[]).filter(a=>a[3]>0&&LS[a[0]]&&LS[a[0]].sp==='b'),sec=ps.reduce((a,b)=>a+b[2],0);
     if(sec>0)ui.logging.note='Trainer: average '+Math.round(ps.reduce((a,b)=>a+b[3]*b[2],0)/sec)+' W'+(avg?', '+avg:'');
     const tt=ps.find(a=>LS[a[0]].name.startsWith('20-minute test'));if(tt&&w.k==='test')ui.logging.result=String(Math.round(tt[3]))}
@@ -1053,7 +1139,7 @@ function viewCoach(){let h=`<div class="row"><h2 class="grow">Coach</h2>${chat.l
   h+=chat.map(m=>`<div class="panel" style="${m.role==='user'?'background:var(--chip);margin-left:32px':'margin-right:16px'}"><span class="label">${m.role==='user'?'You':m.err?'Connection':'Coach'}</span><p style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(m.content)}</p></div>`).join('');
   if(chatBusy)h+=`<p class="muted">Coach is thinking…</p>`;
   return h+`<div class="stack"><textarea id="chat-in" rows="3" placeholder="Ask your coach"></textarea><button class="btn block" data-act="chatSend">Send</button></div>`}
-window.handleBack=()=>{if(ui.live)return true;if(ui.sheet){ui.sheet=null;ui.logging=null;render();return true}if(ui.draft&&S.profile){ui.draft=null;render();return true}if(ui.tab!=='today'){ui.tab='today';render();return true}return false};
+window.handleBack=()=>{if(ui.mapFull){ui.mapFull=false;render();return true}if(ui.live)return true;if(ui.sheet){ui.sheet=null;ui.logging=null;render();return true}if(ui.draft&&S.profile){ui.draft=null;render();return true}if(ui.tab!=='today'){ui.tab='today';render();return true}return false};
 if(S.profile)derive(S.profile);
 if(NATIVE){const sv=lsGet('tripace.live',null);try{const st=JSON.parse(Android.poll());if(st.run&&sv&&sv.id===st.id){ui.live={id:sv.id,steps:sv.steps,st,confirm:false,indoor:!!sv.indoor,trainer:!!sv.trainer,hrm:!!sv.hrm};startPoll()}}catch(e){}}
 render();initSync();
