@@ -241,8 +241,8 @@ const KM=p=>p.units==='mi'?1.609344:1;
 const fmtDist=(km,p)=>(km/KM(p)).toFixed(km/KM(p)<10?1:0)+' '+p.units;
 /* run step lengths: metres under 1.5 km (track-style reps), otherwise miles or km to two decimals at most */
 const trim2=x=>String(+x.toFixed(2));
-const fmtRun=(km,p)=>km<1.5?Math.round(km*1000)+' m':trim2(km/KM(p))+' '+p.units;
-const sayRun=(km,p)=>{if(km<1.5)return Math.round(km*1000)+' metres';const x=trim2(km/KM(p));return x+' '+(p.units==='mi'?(x==='1'?'mile':'miles'):(x==='1'?'kilometre':'kilometres'))};
+const fmtRun=(km,p)=>km<1.605?Math.round(km*1000)+' m':trim2(km/KM(p))+' '+p.units;
+const sayRun=(km,p)=>{if(km<1.605)return Math.round(km*1000)+' metres';const x=trim2(km/KM(p));return x+' '+(p.units==='mi'?(x==='1'?'mile':'miles'):(x==='1'?'kilometre':'kilometres'))};
 const RZ={'r.easy':['Easy',.62,.72],'r.steady':['Steady',.76,.82],'r.thr':['Threshold',.86,.89],'r.int':['Interval',.96,1.0],'r.rep':['Fast strides',1.05,1.10]};
 const RUN_FAT={sprint:1.04,olympic:1.06,half:1.10,full:1.18};
 const BZ={'b.rec':['Recovery',.40,.55,65,80,'RPE 2, very easy'],'b.end':['Endurance Z2',.56,.75,81,89,'RPE 3–4, can talk'],'b.tempo':['Tempo Z3',.76,.87,90,93,'RPE 5–6'],
@@ -465,6 +465,7 @@ const BODY={
 /* a hot day slows run targets for that one workout */
 const heatP=w=>w.heat?Object.assign({},S.profile,{vdot:S.profile.vdot*(1-w.heat)}):S.profile;
 function describe(w,wk,p){
+  if(w.q){const r=quickPlan(w.q,p);return{title:r.title||'Workout',why:r.why||'',steps:r.steps||[]}}
   const ph=wk.ph==='race'?'taper':wk.ph,v=w.v||0,R=RACES[p.race],big=R.tier==='half'||R.tier==='full',runOnly=R.g==='run',m=w.min;let title='',why='',steps=[];
   if(w.sp==='run'){
     if(w.k==='easy'){title='Easy run';why='Aerobic mileage that lets you absorb the harder days. Keep it conversational the whole way.';
@@ -523,11 +524,76 @@ function runByDistance(steps,p){
     const km=raw<1.5?Math.max(.1,Math.round(raw*10)/10):Math.max(u,Math.round(raw/u)*u);
     return Object.assign({},s,{km,min:km*sec/60})};
   return steps.map(s=>s.rep?(s.of.some(o=>o.z==='r.rep'||o.n.startsWith('Uphill'))?s:Object.assign({},s,{of:s.of.map(one)})):one(s))}
+
+/* ---------- just do a workout: one session built from sport, type, and how far or how long ---------- */
+const QK={run:[['easy','Easy'],['long','Long'],['tempo','Tempo'],['int','Intervals'],['hills','Hills'],['race','Race pace'],['rec','Recovery']],
+  bike:[['end','Endurance'],['long','Long'],['rec','Recovery'],['tempo','Tempo'],['ss','Sweet spot'],['thr','Threshold'],['vo2','VO2 max'],['race','Race pace']],
+  swim:[['easy','Easy'],['tech','Technique'],['end','Endurance'],['css','Threshold (CSS)'],['fast','Speed'],['race','Race pace']],
+  strength:[['str','Strength'],['mob','Mobility']]};
+const QT={run:{easy:'Easy run',long:'Long run',tempo:'Tempo run',int:'Intervals',hills:'Hill repeats',race:'Race-pace run',rec:'Recovery run'},
+  bike:{end:'Endurance ride',long:'Long ride',rec:'Recovery ride',tempo:'Tempo ride',ss:'Sweet spot',thr:'Threshold intervals',vo2:'VO2 max bike',race:'Race-pace ride'},
+  swim:{easy:'Easy swim',tech:'Technique swim',end:'Endurance swim',css:'Threshold swim',fast:'Speed swim',race:'Race-pace swim'},
+  strength:{str:'Strength',mob:'Mobility'}};
+const qByT=q=>q.by==='time'||q.sp==='strength';
+function qDefault(sp,kind,by,p){const mi=p.units==='mi';
+  if(by==='time'||sp==='strength')return kind==='mob'?15:sp==='strength'?30:kind==='long'?(sp==='bike'?150:90):sp==='bike'?60:45;
+  if(sp==='swim')return p.pool==='yd'?2000:1800;
+  if(sp==='bike')return kind==='long'?(mi?40:60):(mi?20:30);
+  return kind==='long'?(mi?10:16):kind==='rec'?(mi?3:5):(mi?5:8)}
+const qRepChoices=(q,p)=>q.kind==='int'?[200,300,400,600,800,1000,1200,1600]:p.units==='mi'?[1000,1609,2414,3219]:[1000,1500,2000,3000];
+/* Distance runs: warm-up and cool-down in quarter miles (or half km), reps sized from what is left;
+   whatever does not divide evenly goes on the cool-down. Hill reps stay timed because hills differ in length. */
+function qRunDist(q,D,p){const u=p.units==='mi'?KM(p)/4:.5,ru=x=>Math.max(u,Math.round(x/u)*u),K=(n,km,z,note)=>({n,km,z,note,min:km*runSecPerKm(p,z)/60});
+  if(['easy','long','rec'].includes(q.kind))return{steps:[K(QT.run[q.kind],D,'r.easy',{easy:'Conversational the whole way',long:'Take fluids, and carbs if over 75 min',rec:'Slower than feels necessary. Just loosen up'}[q.kind])]};
+  if(D<3)return{err:'Structured runs need at least '+(p.units==='mi'?'2 mi':'3 km')+' to fit a warm-up and cool-down.'};
+  const wu=ru(D>=10?2.4:D>=6?1.6:1.2),cd=ru(D>=8?1.6:1),main=D-wu-cd,W=K('Warm up',wu,'r.easy','Finish with 3 short pick-ups');
+  if(q.kind==='hills'){const hk=90/runSecPerKm(p,'r.int')+120/runSecPerKm(p,'r.easy'),reps=q.reps||clamp(Math.floor(main/hk),4,12);
+    return{reps,steps:[W,{rep:reps,of:[st('Uphill, strong',1.5,'r.int','Find a steady hill'),st('Jog back down',2,'r.easy')]},K('Cool down',ru(cd+Math.max(0,main-reps*hk)),'r.easy')]}}
+  if(q.kind==='int'){const repM=q.repM||(main<3.5?400:main<6?800:1000),rec=Math.max(200,Math.round(repM/200)*100),reps=q.reps||clamp(Math.floor(main*1000/(repM+rec)),2,16);
+    return{reps,repM,steps:[W,{rep:reps,of:[K('Hard interval',repM/1000,'r.int'),K('Easy recovery',rec/1000,'r.easy','Jog or walk')]},K('Cool down',ru(cd+Math.max(0,main-reps*(repM+rec)/1000)),'r.easy')]}}
+  // tempo and race pace: longer reps with a short jog, or one continuous block when the run is short
+  const z=q.kind==='race'?'r.race':'r.thr',name=q.kind==='race'?'Race pace':'Tempo',note=q.kind==='race'?'Settle into goal pace early':'Comfortably hard, never a sprint';
+  const mi=p.units==='mi',def=main<6.5?(mi?1609:1500):(mi?3219:3000),recK=.4;
+  if(!q.reps&&!q.repM&&main<def*1.8/1000){const k=ru(main);return{reps:1,repM:Math.round(k*1000),steps:[W,K(name,k,z,note),K('Cool down',ru(cd+main-k),'r.easy')]}}
+  const repM=q.repM||def,repK=repM/1000,reps=q.reps||clamp(Math.floor((main+recK)/(repK+recK)),1,10);
+  const mid=reps>1?{rep:reps,of:[K(name,repK,z,note),K('Easy jog',recK,'r.easy')]}:K(name,repK,z,note);
+  return{reps,repM,steps:[W,mid,K('Cool down',ru(cd+Math.max(0,main-reps*(repK+recK))),'r.easy')]}}
+function qRunTime(q,T,p){const wu=T<40?10:12,cd=T<40?5:8;
+  switch(q.kind){case'tempo':return intervals(T,wu,cd,8,2,'r.thr','r.easy','Threshold');
+    case'int':return intervals(T,wu,cd,3,2.5,'r.int','r.easy','Hard interval');
+    case'hills':return intervals(T,wu,cd,1.5,2,'r.int','r.easy','Uphill, strong');
+    case'race':return intervals(T,wu,cd,RACES[p.race].tier==='full'||RACES[p.race].tier==='half'?10:5,2,'r.race','r.easy','Race pace');
+    case'long':return[st('Long run',T,'r.easy','Take fluids, and carbs if over 75 min')];
+    case'rec':return[st('Recovery run',T,'r.easy','Slower than feels necessary. Just loosen up')];
+    default:return[st('Easy run',T,'r.easy','Conversational the whole way')]}}
+/* Rides: steady rides can end on distance; structured rides are built on time (from your usual speed when you give a distance) */
+function qBike(q,A,byT,p){const D=A*KM(p),T=byT?A:Math.max(20,Math.round(D/(p.kph*.95)*60/5)*5);
+  const steady={end:['Steady ride','b.end','Cadence 85–95 rpm'],long:['Steady ride','b.end','60–90 g carbs per hour once rides pass 90 min'],rec:['Easy spin','b.rec','Very light, high cadence']}[q.kind];
+  if(steady){if(byT)return[st(steady[0],T,steady[1],steady[2])];const a=bzone(steady[1],p),v=bikeMs(p,(a[1]+a[2])/2);return[{n:steady[0],km:D,z:steady[1],note:steady[2],min:D*1000/v/60}]}
+  const I={tempo:[12,4,'b.tempo','b.end','Tempo'],ss:[10,4,'b.ss','b.end','Sweet spot'],thr:[8,4,'b.thr','b.end','Threshold'],vo2:[3,3,'b.vo2','b.rec','VO2 effort'],race:[12,3,RACES[p.race].tier==='full'?'b.tempo':'b.race','b.end','Race effort']}[q.kind];
+  return intervals(T,12,8,I[0],I[1],I[2],I[3],I[4])}
+function qSwim(q,A,byT,p){const pace=p.css+20,min=byT?A:(A/100+.01)*pace/60;
+  if(q.kind==='easy'){const T=clamp(Math.floor(min*60/pace)*100,300,10000),WU=T>=2000?400:T>=1000?300:200,CD=T>=1500?200:100,s=(n,dist,note)=>({n,reps:1,dist,z:'s.easy',rest:0,note});
+    return{min,steps:[s('Warm up',WU,'Mix freestyle with a little backstroke or kick'),s('Easy swim',Math.max(100,T-WU-CD),'Relaxed, long strokes. Pull buoy optional'),s('Cool down',CD)]}}
+  const m={tech:['tech','base',0],end:['end','build',0],css:['key','base',0],fast:['key','build',1],race:['key','peak',0]}[q.kind];
+  return{min,steps:swimSet({min,k:m[0],v:m[2]},m[1],p)}}
+function quickPlan(q,p){const A=parseFloat(String(q.amt).replace(',','.')),byT=qByT(q),title=(QT[q.sp]||{})[q.kind]||'Workout',why='Your own workout, set up just for this day.';
+  const unit=byT?'minutes':q.sp==='swim'?p.pool:p.units;
+  if(!(A>0))return{title,err:'Enter how '+(byT?'long':'far')+'.'};
+  const lim=byT?[5,600]:q.sp==='swim'?[200,10000]:q.sp==='bike'?[1,250]:[.5,60];
+  if(A<lim[0]||A>lim[1])return{title,err:'Choose between '+lim[0]+' and '+lim[1]+' '+unit+'.'};
+  let steps,min=0,extra={};
+  if(q.sp==='run'){if(byT)steps=qRunTime(q,A,p);else{const r=qRunDist(q,A*KM(p),p);if(r.err)return{title,err:r.err};steps=r.steps;extra={reps:r.reps,repM:r.repM}}}
+  else if(q.sp==='bike')steps=qBike(q,A,byT,p);
+  else if(q.sp==='swim'){const r=qSwim(q,A,byT,p);steps=r.steps;min=r.min}
+  else{steps=describe({sp:'strength',k:q.kind==='mob'?'mob':'str',min:A},{ph:'base'},p).steps;min=A}
+  if(!min){const walk=(s,k)=>s.rep?s.of.reduce((a,o)=>a+walk(o,s.rep),0):(s.min||0)*k;min=steps.reduce((a,s)=>a+walk(s,1),0)}
+  return Object.assign({title,why,steps,min},extra)}
 function estDist(w,d,p){
   if(w.sp==='strength'||w.sp==='race')return'';
   if(w.sp==='swim')return d.steps.reduce((a,s)=>a+(s.dist||0)*(s.reps||1),0)+' '+p.pool;
-  let rk=0,bm=0;const walk=(s,mult)=>{if(s.rep)return s.of.forEach(o=>walk(o,s.rep));if(s.km){rk+=s.km*mult;return}if(!s.min||!s.z)return;if(s.z[0]==='r')rk+=s.min*mult*60/runSecPerKm(p,s.z);else bm+=s.min*mult};
-  d.steps.forEach(s=>walk(s,1));const parts=[];if(bm)parts.push(fmtDist(bm/60*p.kph*.95,p)+(rk?' ride':''));if(rk)parts.push(fmtDist(rk,p)+(bm?' run':''));return parts.length?'≈ '+parts.join(' + '):''}
+  let rk=0,bm=0,bk=0;const walk=(s,mult)=>{if(s.rep)return s.of.forEach(o=>walk(o,s.rep));if(s.km){if(s.z&&s.z[0]==='b')bk+=s.km*mult;else rk+=s.km*mult;return}if(!s.min||!s.z)return;if(s.z[0]==='r')rk+=s.min*mult*60/runSecPerKm(p,s.z);else bm+=s.min*mult};
+  d.steps.forEach(s=>walk(s,1));const parts=[];if(bm||bk)parts.push(fmtDist(bk+bm/60*p.kph*.95,p)+(rk?' ride':''));if(rk)parts.push(fmtDist(rk,p)+(bm?' run':''));return parts.length?'≈ '+parts.join(' + '):''}
 
 /* ---------- state ---------- */
 const KEY='tripace.v1';let S={v:1,profile:null,plan:null,log:{},updatedAt:0};
@@ -576,12 +642,29 @@ function viewToday(){const p=S.profile,pl=S.plan,n=pl.weeks.length,t=today();let
   h+=`<div class="stack"><div class="row"><h2 class="grow">${day===t?'Today':fmtDate(day)}</h2>${day!==t&&cw>=0&&cw<n?`<button class="chip" data-act="day" data-d="${t}">Back to today</button>`:''}</div>`;
   h+=list.length?list.map(w=>woCard(w,wk)).join(''):`<div class="panel"><h3>Rest day</h3><p class="muted">No training planned. Recovery is when the fitness is built: sleep well, eat well, move a little.</p></div>`;
   h+=`</div>`;
-  if(ui.adding){const A=ui.adding;h+=`<div class="panel"><h3>Add an extra workout on ${fmtDate(day)}</h3><div class="chips">${SPORTS(p).concat('strength').map(s=>chip(s==='strength'?'Strength':SPN[s],'addSet','data-k="sp" data-v="'+s+'"',A.sp===s)).join('')}</div><div class="chips">${[20,30,45,60,90].map(m=>chip(m+' min','addSet','data-k="min" data-v="'+m+'"',A.min===m)).join('')}</div><p class="muted small">An easy session on top of your plan. It counts toward your weekly totals but does not change the plan.</p><div class="row"><button class="btn ghost" data-act="addCancel">Cancel</button><button class="btn grow" data-act="addGo">Add workout</button></div></div>`}
-  else h+=`<button class="btn line block" data-act="addOpen">Add an extra workout</button>`;
+  h+=ui.quick?viewQuick():`<button class="btn line block" data-act="qOpen" data-d="${day}">Just do a workout</button>`;
   const pm=sportMins(wk),dm=sportMins(wk,true);
   h+=`<div class="panel"><div class="row"><h2 class="grow">This week</h2><span class="num" style="font-size:1.3rem">${fmtDur(sum(dm))} / ${fmtDur(sum(pm))}</span></div><p class="muted small">${wk.rec?'Recovery week: about 30% less load so the last three weeks can sink in. ':''}${PHASE_NOTE[wk.ph]}</p>`;
   [['swim','Swim'],['bike','Bike'],['run','Run'],['strength','Strength']].forEach(([k,l])=>{if(pm[k])h+=`<div class="mrow c-${k}"><span class="label">${l}</span><div class="meter"><i style="width:${Math.min(100,dm[k]/pm[k]*100)}%"></i></div><span class="small num">${fmtDur(dm[k])} / ${fmtDur(pm[k])}</span></div>`});
   return h+`</div>`}
+/* planned workouts on a day that a quick workout could replace */
+function qPlanned(day){const pl=S.plan,wi=Math.floor(dayDiff(pl.start,day)/7);if(wi<0||wi>=pl.weeks.length)return[];
+  const wk=pl.weeks[wi],dd=dayDiff(wkStart(wi),day);return wk.w.filter(w=>w.d===dd&&!S.log[w.id]&&w.sp!=='race'&&!w.q)}
+function viewQuick(){const Q=ui.quick,p=S.profile,byT=qByT(Q),plan=qPlanned(Q.day);
+  let h=`<div class="panel" id="quick"><div class="row"><h3 class="grow">Just do a workout · ${Q.day===today()?'today':fmtDate(Q.day)}</h3><button class="chip" data-act="qCancel" aria-label="Close">✕</button></div>
+    <span class="label">Sport</span><div class="chips">${['run','bike','swim','strength'].map(s=>chip(s==='strength'?'Strength':SPN[s],'qSet','data-k="sp" data-v="'+s+'"',Q.sp===s)).join('')}</div>
+    <span class="label">Type</span><div class="chips">${QK[Q.sp].map(([k,l])=>chip(l,'qSet','data-k="kind" data-v="'+k+'"',Q.kind===k)).join('')}</div>
+    ${Q.sp==='strength'?'':`<div class="chips">${chip('How far','qSet','data-k="by" data-v="dist"',!byT)}${chip('How long','qSet','data-k="by" data-v="time"',byT)}</div>`}
+    <label class="field"><span>${byT?'Minutes':'Distance in '+(Q.sp==='swim'?(p.pool==='yd'?'yards':'metres'):p.units==='mi'?'miles':'km')}</span><input type="text" inputmode="decimal" id="q-amt" data-q="amt" value="${esc(Q.amt)}"></label>
+    <div id="q-prev" class="stack">${quickPrev()}</div>`;
+  if(plan.length)h+=`<span class="label">Already planned that day</span><div class="chips">${plan.map(w=>chip('Replace '+esc(describe(w,findW(w.id).wk,p).title.toLowerCase()),'qSet','data-k="rep" data-v="'+w.id+'"',Q.rep===w.id)).join('')}${chip('Do both','qSet','data-k="rep" data-v="none"',Q.rep==='none')}</div><span class="muted small">Replace takes the planned workout off that day. Remove this workout later and the planned one comes back.</span>`;
+  return h+`${Q.err?`<p class="err">${esc(Q.err)}</p>`:''}<div class="row"><button class="btn ghost" data-act="qCancel">Cancel</button><button class="btn grow" data-act="qGo">Set it up</button></div></div>`}
+function quickPrev(){const Q=ui.quick,p=S.profile,r=quickPlan(Q,p);if(r.err)return`<p class="muted small">${esc(r.err)}</p>`;
+  const dist=estDist({sp:Q.sp},{steps:r.steps},p);
+  let h=`<div class="row"><strong class="grow">${esc(r.title)}</strong><span class="muted small">≈ ${fmtDur(Math.max(5,Math.round(r.min)))}${dist?' · '+dist.replace('≈ ',''):''}</span></div><div class="steps">${r.steps.map(s=>stepHtml(s,p,Q.sp)).join('')}</div>`;
+  if(r.reps&&Q.kind!=='easy'){h+=`<div class="row"><span class="label grow">Reps</span><button class="chip" data-act="qReps" data-n="-1" aria-label="Fewer reps">−</button><span class="num" style="min-width:2ch;text-align:center">${r.reps}</span><button class="chip" data-act="qReps" data-n="1" aria-label="More reps">+</button></div>`;
+    if(Q.kind!=='hills')h+=`<span class="label">Rep distance</span><div class="chips">${qRepChoices(Q,p).map(m=>chip(fmtRun(m/1000,p),'qSet','data-k="repM" data-v="'+m+'"',r.repM===m)).join('')}${Q.reps||Q.repM?chip('Auto','qSet','data-k="auto" data-v="1"',false):''}</div>`}
+  return h}
 function viewPlan(){const p=S.profile,pl=S.plan,n=pl.weeks.length,cw=curWeek();const mins=pl.weeks.map(w=>sportMins(w)),max=Math.max(...mins.map(sum));
   let h=`<div class="panel"><div class="row"><h2 class="grow">Training load</h2><span class="label">Peak ${fmtDur(max)} / week</span></div><div class="chart">`;
   mins.forEach((m,i)=>{h+=`<div class="col${i===cw?' cur':i<cw?' past':''}" style="height:${Math.max(4,sum(m)/max*100)}%" title="Week ${i+1}: ${fmtDur(sum(m))}">${['swim','bike','run','strength'].map(k=>m[k]?`<i class="c-${k}" style="flex:${m[k]}"></i>`:'').join('')}</div>`});
@@ -730,7 +813,7 @@ function viewSheet(){const{wk,i,w}=findW(ui.sheet),p=heatP(w),d=describe(w,wk,p)
     if(hasRun&&p.runMode!=='rpe')h+=`<div class="stack"><span class="label">Conditions today</span><div class="chips">${chip('Normal','heat','data-v="0"',!w.heat)}${chip(p.units==='mi'?'Warm, 75–84°F':'Warm, 24–29°C','heat','data-v="0.03"',w.heat===0.03)}${chip(p.units==='mi'?'Hot, 85°F+':'Hot, 30°C+','heat','data-v="0.06"',w.heat===0.06)}</div>${w.heat?'<span class="muted small">Run pace targets above are slowed for the heat. Drink early and often.</span>':''}</div>`;
     if(NATIVE&&['run','bike','brick'].includes(w.sp)&&!(lg&&lg.s==='done'))h+=w.sp==='run'?`<button class="btn block" data-act="liveStart">Start with GPS</button><button class="btn line block" data-act="liveStartIndoor">Start indoors, timer only</button>`
       :`<div class="stack"><span class="label">Where are you riding?</span><div class="row"><button class="btn grow" data-act="liveStart">Outdoors</button><button class="btn grow" data-act="liveStartTrainer">On the trainer</button></div><span class="muted small">Outdoors tracks with GPS. On the trainer connects to your smart trainer over Bluetooth and sets its resistance to each step's target watts${S.profile.ftp?'':'. Add your FTP under Paces first, or the trainer is read but not controlled'}.</span></div>`;
-    if(w.extra&&!lg)h+=`<button class="btn line block" data-act="delExtra">Remove this extra workout</button>`;
+    if(w.extra&&!lg)h+=`<button class="btn line block" data-act="delExtra">${w.was?'Remove this and bring back '+esc(describe(w.was,wk,p).title.toLowerCase()):w.q?'Remove this workout':'Remove this extra workout'}</button>`;
     h+=`<div class="row"><button class="btn ${NATIVE&&['run','bike','brick'].includes(w.sp)&&!(lg&&lg.s==='done')?'ghost ':''}grow" data-act="logStart">${lg&&lg.s==='done'?'Edit log':'Mark done'}</button>${lg?`<button class="btn ghost" data-act="unlog">Clear</button>`:`<button class="btn ghost" data-act="skip">Skip</button>`}</div>`;
     if(w.sp!=='race'&&!(lg&&lg.s==='done'))h+=`<div class="stack"><span class="label">Move to another day this week</span><div class="chips">${DN.map((n,dI)=>chip(n,'move','data-d="'+dI+'"',w.d===dI)).join('')}</div></div>`}
   return h+`</div>`}
@@ -779,12 +862,26 @@ function act(a,el){const D=ui.draft,v=el.dataset.v;
     case'adaptSet':{const k=el.dataset.k;ui.adapt[k]=k==='days'?+v:k==='ask'?!!v:v;break}
     case'adaptApply':applyAdapt();break;
     case'realign':{const ids=missed();ids.forEach(id=>S.log[id]={s:'skip',at:today()});if(v==='ease')eachPlanned(today(),addDays(today(),4),w=>{soften(w,60,.7)});save();toast(v==='ease'?'Next five days eased':'Missed workouts cleared');break}
-    case'addOpen':ui.adding={sp:SPORTS(S.profile)[0],min:30};break;
-    case'addCancel':ui.adding=null;break;
-    case'addSet':ui.adding[el.dataset.k]=el.dataset.k==='min'?+v:v;break;
-    case'addGo':{const pl=S.plan,dy=ui.day||today(),wi=Math.floor(dayDiff(pl.start,dy)/7),A=ui.adding;if(wi>=0&&wi<pl.weeks.length){const wk=pl.weeks[wi];
-      wk.w.push({id:wi+'-x'+Date.now().toString(36),d:dayDiff(wkStart(wi),dy),sp:A.sp,k:A.sp==='swim'?'end':A.sp==='strength'?'str':'easy',min:A.min,x:0,v:wi,extra:true});wk.w.sort((a,b)=>a.d-b.d);save();toast('Extra workout added')}ui.adding=null;break}
-    case'delExtra':{const{wk,w}=findW(ui.sheet);wk.w=wk.w.filter(x=>x!==w);ui.sheet=null;save();break}
+    case'qOpen':ui.quick={sp:'run',kind:'easy',by:'dist',amt:String(qDefault('run','easy','dist',S.profile)),auto:true,day:el.dataset.d||today(),rep:null,reps:null,repM:null,err:''};break;
+    case'qCancel':ui.quick=null;break;
+    case'qSet':{const Q=ui.quick,k=el.dataset.k;Q.err='';
+      if(k==='sp'){Q.sp=v;Q.kind=QK[v][0][0];Q.reps=Q.repM=null;Q.auto=true}
+      else if(k==='kind'){Q.kind=v;Q.reps=Q.repM=null}
+      else if(k==='by'){Q.by=v;Q.reps=Q.repM=null;Q.auto=true}
+      else if(k==='repM'){Q.repM=+v}
+      else if(k==='auto'){Q.reps=Q.repM=null}
+      else if(k==='rep'){Q.rep=v}
+      if(Q.auto&&k!=='rep')Q.amt=String(qDefault(Q.sp,Q.kind,Q.by,S.profile));break}
+    case'qReps':{const Q=ui.quick,r=quickPlan(Q,S.profile);if(r.reps)Q.reps=clamp(r.reps+ +el.dataset.n,1,20);break}
+    case'qGo':{const Q=ui.quick,p=S.profile,pl=S.plan,dy=Q.day,wi=Math.floor(dayDiff(pl.start,dy)/7),r=quickPlan(Q,p);
+      if(r.err){Q.err=r.err;break}
+      if(wi<0||wi>=pl.weeks.length){Q.err='That day is outside your plan.';break}
+      if(qPlanned(dy).length&&!Q.rep){Q.err='Choose whether to replace the planned workout or do both.';break}
+      const wk=pl.weeks[wi],q={sp:Q.sp,kind:Q.kind,by:qByT(Q)?'time':'dist',amt:Q.amt,reps:Q.reps||null,repM:Q.repM||null};
+      const w={id:wi+'-q'+Date.now().toString(36),d:dayDiff(wkStart(wi),dy),sp:Q.sp,k:'quick',min:Math.max(5,Math.round(r.min)),x:0,v:wi,extra:true,q};
+      if(Q.rep&&Q.rep!=='none'){const old=wk.w.find(x=>x.id===Q.rep);if(old){wk.w=wk.w.filter(x=>x!==old);w.was=old}}
+      wk.w.push(w);wk.w.sort((a,b)=>a.d-b.d);ui.quick=null;ui.sheet=w.id;ui.logging=null;save();toast('Workout ready');break}
+    case'delExtra':{const{wk,w}=findW(ui.sheet);wk.w=wk.w.filter(x=>x!==w);if(w.was){wk.w.push(w.was);wk.w.sort((a,b)=>a.d-b.d)}ui.sheet=null;save();if(w.was)toast('Planned workout is back');break}
     case'heat':{const{w}=findW(ui.sheet);w.heat=+v||0;save();break}
     case'tune':{const p=S.profile;if(el.dataset.k==='run')p.vAdj=Math.round(((p.vAdj||0)+ +el.dataset.n)*10)/10;else p.cssAdj=(p.cssAdj||0)+ +el.dataset.n;derive(p);save();break}
     case'piAccept':{const p=S.profile,pi=paceInsight();if(pi.adj){p.vAdjPrev=p.vAdj||0;p.vAdj=Math.round(((p.vAdj||0)+pi.adj)*10)/10;Object.values(S.log).forEach(l=>{if(l.pr)l.prUsed=true});derive(p);save();toast('Run paces updated')}break}
@@ -830,7 +927,10 @@ function act(a,el){const D=ui.draft,v=el.dataset.v;
   }
   render()}
 document.addEventListener('click',e=>{const el=e.target.closest('[data-act]');if(el){act(el.dataset.act,el);return}if(e.target.id==='sheet'){ui.sheet=null;ui.logging=null;render()}});
-document.addEventListener('input',e=>{const t=e.target;if(t.dataset.time)fmtTimeInput(t);if(t.dataset.c){cfg[t.dataset.c]=t.value.trim();lsSet('tripace.coach',cfg);return}if(t.dataset.f&&ui.draft){setPath(ui.draft,t.dataset.f,t.value);if(t.dataset.re&&t.value)render()}else if(t.dataset.l&&ui.logging)ui.logging[t.dataset.l]=t.value});
+document.addEventListener('input',e=>{const t=e.target;
+  // quick workout amount: refresh only the preview so the keyboard stays open
+  if(t.dataset.q&&ui.quick){const Q=ui.quick;Q.amt=t.value;Q.auto=false;Q.reps=null;Q.err='';const pv=$('#q-prev');if(pv)pv.innerHTML=quickPrev();return}
+  if(t.dataset.time)fmtTimeInput(t);if(t.dataset.c){cfg[t.dataset.c]=t.value.trim();lsSet('tripace.coach',cfg);return}if(t.dataset.f&&ui.draft){setPath(ui.draft,t.dataset.f,t.value);if(t.dataset.re&&t.value)render()}else if(t.dataset.l&&ui.logging)ui.logging[t.dataset.l]=t.value});
 /* ---------- Android app only: GPS-guided workouts and a coach on your own LLM ---------- */
 const NATIVE=!!window.Android;
 const lsGet=(k,d)=>{try{const v=localStorage.getItem(k);return v?(JSON.parse(v)??d):d}catch(e){return d}};
@@ -875,7 +975,7 @@ const trainerMsg=st=>({off:'Starting Bluetooth…',scanning:'Searching for your 
   error:'Bluetooth problem. Check Bluetooth is on and that no other app (Wahoo, Zwift) is connected to the trainer.'})[st.trainer]||'Starting Bluetooth…';
 /* ---------- plan adaptation, missed workouts, pace insights ---------- */
 function eachPlanned(from,to,fn){S.plan.weeks.forEach((wk,i)=>{const ws=wkStart(i);wk.w=wk.w.filter(w=>{const dt=addDays(ws,w.d);if(dt<from||dt>to||S.log[w.id]||w.sp==='race')return true;return fn(w)!==false})})}
-function soften(w,cap,longF){if(w.sp==='strength')return;if(w.sp==='brick'){w.sp='bike';w.x=0}const wasLong=w.k==='long';w.k=w.sp==='swim'?'tech':'easy';w.min=r5(Math.min(wasLong?w.min*longF:w.min,cap))}
+function soften(w,cap,longF){if(w.sp==='strength'||w.q)return;if(w.sp==='brick'){w.sp='bike';w.x=0}const wasLong=w.k==='long';w.k=w.sp==='swim'?'tech':'easy';w.min=r5(Math.min(wasLong?w.min*longF:w.min,cap))}
 function applyAdapt(){const A=ui.adapt,t=today(),end=addDays(t,A.days-1);
   eachPlanned(t,end,w=>{if(A.mode==='pause')return false;if(A.mode==='short'&&w.sp==='strength')return false;soften(w,A.mode==='short'?30:60,.6)});
   eachPlanned(addDays(end,1),addDays(end,Math.min(7,Math.ceil(A.days/2)+2)),w=>{soften(w,75,.75)});A.ask=false;save();toast('Plan adjusted. Ease back in when you return.')}
