@@ -239,6 +239,10 @@ function derive(p){const f=p.fit;p.est={};if(!RACES[p.race])p.race='olympic';
   p.rlthr=rl||(bl?bl+5:mx?Math.round(mx*.89):0);p.lthr=bl||(rl?rl-5:mx?Math.round(mx*.85):0);p.hrEst=!rl||!bl;return p}
 const KM=p=>p.units==='mi'?1.609344:1;
 const fmtDist=(km,p)=>(km/KM(p)).toFixed(km/KM(p)<10?1:0)+' '+p.units;
+/* run step lengths: metres under 1.5 km (track-style reps), otherwise miles or km to two decimals at most */
+const trim2=x=>String(+x.toFixed(2));
+const fmtRun=(km,p)=>km<1.5?Math.round(km*1000)+' m':trim2(km/KM(p))+' '+p.units;
+const sayRun=(km,p)=>{if(km<1.5)return Math.round(km*1000)+' metres';const x=trim2(km/KM(p));return x+' '+(p.units==='mi'?(x==='1'?'mile':'miles'):(x==='1'?'kilometre':'kilometres'))};
 const RZ={'r.easy':['Easy',.62,.72],'r.steady':['Steady',.76,.82],'r.thr':['Threshold',.86,.89],'r.int':['Interval',.96,1.0],'r.rep':['Fast strides',1.05,1.10]};
 const RUN_FAT={sprint:1.04,olympic:1.06,half:1.10,full:1.18};
 const BZ={'b.rec':['Recovery',.40,.55,65,80,'RPE 2, very easy'],'b.end':['Endurance Z2',.56,.75,81,89,'RPE 3–4, can talk'],'b.tempo':['Tempo Z3',.76,.87,90,93,'RPE 5–6'],
@@ -508,11 +512,21 @@ function describe(w,wk,p){
       :l.sp==='bike'?{n:'Bike '+fmtDist(l.d,p),q:fmtT(l.t),note:(r.kph/u).toFixed(1)+' '+p.units+'/h. '+target('b.race',p).text+'. '+(big?'Take 60–90 g of carbs per hour and drink to a schedule.':'Sip sports drink; one gel late in the ride.')}
       :l.sp==='run'?{n:'Run '+fmtDist(l.d,p),q:fmtT(l.t),note:fmtT(r.runPace*u)+' /'+p.units+'. Hold back for the first '+(l.d>12?'5 km':'kilometre')+', then build.'}
       :{n:l.label,q:fmtT(l.t),note:'Quick and calm. Lay your kit out the same way you practised.'})}
+  if(w.sp==='run'||w.sp==='brick')steps=runByDistance(steps,p);
   return{title,why,steps}}
+/* Run steps go by distance: each length comes from the step's target pace, rounded to something you can run
+   (100 m under 1.5 km, otherwise quarter miles or half kilometres). Strides and hill repeats stay timed:
+   they are by feel, and hills differ in length. min is re-estimated from the rounded distance. */
+function runByDistance(steps,p){
+  const one=s=>{if(!s.min||!s.z||s.z[0]!=='r'||s.km||s.z==='r.rep')return s;
+    const sec=runSecPerKm(p,s.z),raw=s.min*60/sec,u=p.units==='mi'?KM(p)/4:.5;
+    const km=raw<1.5?Math.max(.1,Math.round(raw*10)/10):Math.max(u,Math.round(raw/u)*u);
+    return Object.assign({},s,{km,min:km*sec/60})};
+  return steps.map(s=>s.rep?(s.of.some(o=>o.z==='r.rep'||o.n.startsWith('Uphill'))?s:Object.assign({},s,{of:s.of.map(one)})):one(s))}
 function estDist(w,d,p){
   if(w.sp==='strength'||w.sp==='race')return'';
   if(w.sp==='swim')return d.steps.reduce((a,s)=>a+(s.dist||0)*(s.reps||1),0)+' '+p.pool;
-  let rk=0,bm=0;const walk=(s,mult)=>{if(s.rep)return s.of.forEach(o=>walk(o,s.rep));if(s.km){rk+=s.km;return}if(!s.min||!s.z)return;if(s.z[0]==='r')rk+=s.min*mult*60/runSecPerKm(p,s.z);else bm+=s.min*mult};
+  let rk=0,bm=0;const walk=(s,mult)=>{if(s.rep)return s.of.forEach(o=>walk(o,s.rep));if(s.km){rk+=s.km*mult;return}if(!s.min||!s.z)return;if(s.z[0]==='r')rk+=s.min*mult*60/runSecPerKm(p,s.z);else bm+=s.min*mult};
   d.steps.forEach(s=>walk(s,1));const parts=[];if(bm)parts.push(fmtDist(bm/60*p.kph*.95,p)+(rk?' ride':''));if(rk)parts.push(fmtDist(rk,p)+(bm?' run':''));return parts.length?'≈ '+parts.join(' + '):''}
 
 /* ---------- state ---------- */
@@ -543,7 +557,7 @@ const chip=(label,act,attrs,on)=>`<button class="chip" data-act="${act}" ${attrs
 function woCard(w,wk){const p=S.profile,d=describe(w,wk,p),lg=S.log[w.id],dist=estDist(w,d,p);
   const label=w.sp==='brick'?'Brick':w.sp==='race'?(w.k==='prac'?'Practice race':'Race day'):w.sp[0].toUpperCase()+w.sp.slice(1);
   return`<button class="wo c-${w.sp}${lg&&lg.s==='skip'?' is-skip':''}" data-act="open" data-id="${w.id}"><span class="bar c-${w.sp}"></span><span class="body"><span class="sp">${label} · ${fmtDur(w.min+(w.x||0))}${dist?' · '+dist:''}</span><h3>${esc(d.title)}</h3><span class="muted small">${esc(summary(d,p))}</span></span>${lg?`<span class="tick ${lg.s}">${lg.s==='done'?'Done':'Skipped'}</span>`:''}</button>`}
-function summary(d,p){const rep=d.steps.find(s=>s.rep);if(rep){const a=rep.of[0],t=target(a.z,p);return rep.rep+' × '+fmtStep(a.min)+' '+a.n.toLowerCase()+(t?' @ '+t.text:'')}
+function summary(d,p){const rep=d.steps.find(s=>s.rep);if(rep){const a=rep.of[0],t=target(a.z,p);return rep.rep+' × '+(a.km?fmtRun(a.km,p):fmtStep(a.min))+' '+a.n.toLowerCase()+(t?' @ '+t.text:'')}
   const main=d.steps.find(s=>s.reps>1&&s.z&&s.z!=='s.easy')||d.steps.find(s=>s.z&&s.n!=='Warm up')||d.steps[1]||d.steps[0];if(!main)return'';
   if(main.dist){const t=target(main.z,p);return(main.reps>1?main.reps+' × ':'')+main.dist+' '+p.pool+(t?' @ '+t.text:'')}
   const t=target(main.z,p);return t?t.name+' · '+t.text:(main.note||'')}
@@ -697,7 +711,7 @@ function viewWizard(){const D=ui.draft,R=RACES[D.race],mode=ui.wizMode,step=ui.w
 /* ---------- sheet ---------- */
 function stepHtml(s,p,sp){
   if(s.rep)return`<div class="repbox c-${sp==='brick'?'bike':sp}"><span class="x">${s.rep} ×</span>${s.of.map(o=>stepHtml(o,p,sp)).join('')}</div>`;
-  const t=target(s.z,p);let q=s.q||'';if(s.dist)q=(s.reps>1?s.reps+' × ':'')+s.dist+' '+p.pool;else if(s.min)q=fmtStep(s.min);else if(s.km)q='5K';
+  const t=target(s.z,p);let q=s.q||'';if(s.dist)q=(s.reps>1?s.reps+' × ':'')+s.dist+' '+p.pool;else if(s.km)q=s.z==='r.tt'?'5K':fmtRun(s.km,p)+(s.min?' · ≈ '+fmtStep(Math.round(s.min)||1):'');else if(s.min)q=fmtStep(s.min);
   const z=[t?`${t.name}: ${t.text}`:'',s.rest?s.rest+'s rest':'',s.note||''].filter(Boolean).join(' · ');
   return`<div class="step"><span class="t">${esc(s.n)}</span><span class="q">${esc(q)}</span>${z?`<span class="z">${esc(z)}</span>`:''}</div>`}
 function viewSheet(){const{wk,i,w}=findW(ui.sheet),p=heatP(w),d=describe(w,wk,p),lg=S.log[w.id],date=addDays(wkStart(i),w.d),dist=estDist(w,d,p);
@@ -825,7 +839,8 @@ const cfg=Object.assign({url:'',model:'',key:'',voice:true},lsGet('tripace.coach
 let chat=lsGet('tripace.chat',[]),chatBusy=false,pollT=0,liveKey='';
 const speakDur=min=>{const s=Math.round(min*60);if(s<60)return s+' seconds';const h=Math.floor(s/3600),m=Math.round(s%3600/60);return((h?h+(h>1?' hours ':' hour '):'')+(m?m+(m>1?' minutes':' minute'):'')).trim()};
 const speakTarget=t=>t.replace(/–/g,' to ').replace('/mi','per mile').replace('/km','per kilometre').replace('mi/h','miles per hour').replace('km/h','kilometres per hour').replace(' W',' watts').replace('RPE','effort');
-function flatSteps(d,p){const out=[];
+/* indoors (treadmill, trainer) there is no GPS distance, so distance steps run on their estimated time instead */
+function flatSteps(d,p,indoor){const out=[];
   const add=(s,i,n)=>{if(s.rep){for(let r=1;r<=s.rep;r++)s.of.forEach(o=>add(o,r,s.rep));return}
     if(!s.min&&!s.km){if(s.n==='Transition')out.push({name:'Transition',sp:'r',sec:180,m:0,lo:0,hi:0,target:s.note,say:'Transition. Rack the bike and get your run shoes on.'});return}
     const t=target(s.z,p),sp=s.z[0]==='r'?'r':'b';let lo=0,hi=0;
@@ -836,12 +851,13 @@ function flatSteps(d,p){const out=[];
     // heart-rate steps: alerts use bpm instead of pace or speed; easy steps have no lower bound
     // steps under 4 minutes (interval recoveries, short reps) are too short for heart rate to settle, so they get no bpm alerts
     let hrLo=0,hrHi=0;if(useHr(s.z,p)){const r=hrRange(s.z,p);if(r&&!(s.min&&s.min<4)){hrHi=r[1];hrLo=s.z==='r.easy'||s.z==='b.rec'||s.z==='b.end'?0:r[0]}if(r){lo=0;hi=0}}
-    const nm=s.n+(n?' '+i+' of '+n:'');
-    out.push({name:nm,sp,z:s.z,w:0,sec:s.min?Math.round(s.min*60):0,m:s.km?s.km*1000:0,lo,hi,hrLo,hrHi,target:t?t.name+' · '+t.text:'',
-      say:nm+'. '+(s.km?s.km+' kilometres':speakDur(s.min))+'. '+(t?'Target '+speakTarget(t.text)+'.':'')})};
+    const nm=s.n+(n?' '+i+' of '+n:''),byM=s.km&&!indoor,sec=s.min?Math.round(s.min*60):s.km?Math.round(s.km*runSecPerKm(p,'r.tt')):0;
+    const dsay=s.km?(s.z==='r.tt'?'5 kilometres':sayRun(s.km,p)):'';
+    out.push({name:nm,sp,z:s.z,w:0,sec,m:byM?Math.round(s.km*1000):0,lo,hi,hrLo,hrHi,target:t?t.name+' · '+t.text:'',dsay:byM?dsay:'',
+      say:nm+'. '+(byM?dsay:speakDur(sec/60))+'. '+(t?'Target '+speakTarget(t.text)+'.':'')})};
   d.steps.forEach(s=>add(s,0,0));return out}
-function startLive(mode){const trainer=mode==='trainer',indoor=!!mode,{wk,w}=findW(ui.sheet),p=heatP(w),steps=flatSteps(describe(w,wk,p),p);let r='';
-  if(indoor)steps.forEach(s=>{s.lo=0;s.hi=0;if(s.m){s.sec=Math.round(s.m/1000*runSecPerKm(p,'r.tt'));s.m=0}});
+function startLive(mode){const trainer=mode==='trainer',indoor=!!mode,{wk,w}=findW(ui.sheet),p=heatP(w),steps=flatSteps(describe(w,wk,p),p,indoor);let r='';
+  if(indoor)steps.forEach(s=>{s.lo=0;s.hi=0});
   // on the trainer each bike step carries a watt target, the middle of its power zone; the FTP test is ridden freely
   if(trainer&&p.ftp)steps.forEach(s=>{if(s.sp!=='b'||!s.z||s.z==='b.tt')return;const a=bzone(s.z,p);s.w=Math.round(p.ftp*(a[1]+a[2])/2);
     s.target=a[0]+' · '+s.w+' W';s.say=s.name+'. '+speakDur(s.sec/60)+'. Target '+s.w+' watts.';s.hrLo=0;s.hrHi=0});
@@ -887,16 +903,18 @@ function renderLive(){const el=$('#live');if(!ui.live){el.hidden=true;liveKey=''
   const tr=!!L.trainer&&!isRun,hrMain=!tr&&s.hrHi>0&&!fin,hrOn=!!L.hrm,key=[i,!!st.paused,fin,!!L.confirm].join();
   if(key!==liveKey){liveKey=key;el.hidden=false;el.innerHTML=`<div class="lv c-${isRun?'run':'bike'}">
     <div class="stack" style="gap:4px"><span class="label" style="color:var(--c)">${fin?'All steps done':'Step '+(i+1)+' of '+n}${st.paused?' · paused':''}</span><h1>${fin?'Workout complete':esc(s.name)}</h1><p class="muted">${fin?'Keep moving to cool down, then finish.':esc(s.target||'By feel')}</p></div>
-    <div class="lvbig"><div><span class="label">${fin?'Total time':s.m?'Distance left':'Time left'}</span><div class="num" id="lv-rem"></div></div><div><span class="label">${tr?'Power, watts':hrMain?'Heart rate':isRun?'Pace /'+p.units:'Speed '+p.units+'/h'}</span><div class="num" id="lv-cur"></div><span class="pill" id="lv-state"></span></div></div>
+    <div class="lvbig"><div><span class="label">${fin?'Total time':s.m?'Distance left':'Time left'}</span><div class="num" id="lv-rem"></div>${s.m&&!fin?'<span class="muted small" id="lv-step"></span>':''}</div><div><span class="label">${tr?'Power, watts':hrMain?'Heart rate':isRun?'Pace /'+p.units:'Speed '+p.units+'/h'}</span><div class="num" id="lv-cur"></div><span class="pill" id="lv-state"></span></div></div>
     <div class="stats"${hrOn?' style="grid-template-columns:repeat(2,1fr)"':''}><div><div class="num" id="lv-dist"></div><span class="label">${p.units==='mi'?'Miles':'Km'}</span></div><div><div class="num" id="lv-time"></div><span class="label">Elapsed</span></div><div><div class="num" id="lv-avg"></div><span class="label">${tr?'Cadence':'Average'}</span></div>${hrOn?`<div><div class="num" id="lv-hr"></div><span class="label">${hrMain?(isRun?'Pace':'Speed'):'Heart rate'}</span></div>`:''}</div>
-    <p class="muted small" id="lv-gps"></p>${hrOn?'<p class="muted small" id="lv-hrs" style="margin-top:-6px"></p>':''}${nx&&!fin?`<p class="muted"><strong>Next:</strong> ${esc(nx.name)} · ${nx.m?nx.m/1000+' km':fmtStep(nx.sec/60)}${nx.target?' · '+esc(nx.target):''}</p>`:''}
+    <p class="muted small" id="lv-gps"></p>${hrOn?'<p class="muted small" id="lv-hrs" style="margin-top:-6px"></p>':''}${nx&&!fin?`<p class="muted"><strong>Next:</strong> ${esc(nx.name)} · ${nx.m?fmtRun(nx.m/1000,p):fmtStep(nx.sec/60)}${nx.target?' · '+esc(nx.target):''}</p>`:''}
     <div style="flex:1"></div>
     ${tr&&!fin?`<div class="row"><button class="chip" data-act="liveBias" data-n="-0.05">Easier 5%</button><span class="grow muted small" id="lv-bias" style="text-align:center"></span><button class="chip" data-act="liveBias" data-n="0.05">Harder 5%</button></div>`:''}
     ${L.confirm?`<div class="row"><button class="btn grow" data-act="liveFinishYes">Finish and save</button><button class="btn ghost grow" data-act="liveFinishNo">Keep going</button></div>`
       :`<div class="row"><button class="btn ghost grow" data-act="livePause">${st.paused?'Resume':'Pause'}</button>${fin?'':'<button class="btn ghost grow" data-act="liveSkip">Skip step</button>'}<button class="btn grow" data-act="liveFinish">Finish</button></div>`}</div>`}
   const set=(id,t)=>{const e=$('#'+id);if(e&&e.textContent!==t)e.textContent=t};
   const fmtV=x=>x>0.4?(isRun?fmtT(um/x):(x*3.6/KM(p)).toFixed(1)):'–';
-  set('lv-rem',fin?fmtT(st.elapsed||0):s.m?fmtDist(Math.max(0,s.m-(st.stepDist||0))/1000,p):fmtT(Math.max(0,s.sec-(st.stepElapsed||0))));
+  const left=Math.max(0,s.m-(st.stepDist||0));
+  set('lv-rem',fin?fmtT(st.elapsed||0):s.m?(s.m<1500||left<1000?Math.round(left)+' m':fmtDist(left/1000,p)):fmtT(Math.max(0,s.sec-(st.stepElapsed||0))));
+  set('lv-step',!fin&&s.m?'This step '+fmtT(st.stepElapsed||0):'');
   const bpm=st.hr>0?String(st.hr):'–';
   set('lv-cur',tr?(st.power>=0?String(st.power):'–'):hrMain?bpm:fmtV(v));if(hrOn){set('lv-hr',hrMain?fmtV(v):bpm);set('lv-hrs',hrMsg(st))}set('lv-bias',st.bias&&Math.abs(st.bias-1)>.01?'Intensity '+Math.round(st.bias*100)+'%':'');
   const stEl=$('#lv-state');if(stEl){let t='',c='var(--chip)',strong=false;if(tr&&!fin&&st.tw>0)t='Target '+st.tw+' W';
