@@ -156,13 +156,21 @@ const fmtDate=s=>{const d=pd(s);return DN[dow(s)]+' '+MN[d.getMonth()]+' '+d.get
 const r5=m=>Math.max(5,Math.round(m/5)*5);
 const clamp=(x,a,b)=>Math.min(b,Math.max(a,x));
 /* n training days with the given long days fixed; the rest spread as evenly as possible, keeping the day after a long day off when it can. */
-function pickDays(n,longs){n=Math.max(0,Math.min(7,n));longs=longs.slice(0,n);const free=[0,1,2,3,4,5,6].filter(d=>!longs.includes(d)),k=n-longs.length;let best=null,bs=1e9;
+function pickDays(n,longs,allowed){n=Math.max(0,Math.min(7,n));longs=longs.slice(0,n);const free=[0,1,2,3,4,5,6].filter(d=>!longs.includes(d)&&(!allowed||allowed[d])),k=Math.min(free.length,n-longs.length);let best=null,bs=1e9;
   const combo=(st,pick)=>{if(pick.length===k){const on=longs.concat(pick).sort((a,b)=>a-b);let sc=0;
       on.forEach((d,i)=>{const g=(i+1<on.length?on[i+1]:on[0]+7)-d;sc+=g*g*10});
       longs.forEach(l=>{const a=(l+1)%7;if(pick.includes(a))sc+=3});pick.forEach(d=>sc+=d*.01);
       if(sc<bs){bs=sc;best=pick.slice()}return}
     for(let i=st;i<free.length;i++){pick.push(free[i]);combo(i+1,pick);pick.pop()}};
   combo(0,[]);const out=[0,0,0,0,0,0,0];(best||[]).forEach(d=>out[d]=1);longs.forEach(d=>out[d]=2);return out}
+/* Availability: avail[d] the athlete can train that day, longOK[d] it has time for a long session.
+   Older profiles only have days[] (0 off, 1 train, 2 long), which then doubles as availability. */
+const AVL=(p,d)=>p.avail?!!p.avail[d]:p.days[d]>0, LOK=(p,d)=>p.longOK?!!p.longOK[d]:p.days[d]===2;
+/* The usual week for the goal: multisport plans with a bike and a run need two long days, others one. */
+function weekPattern(p){const av=[0,1,2,3,4,5,6].map(d=>AVL(p,d)),na=av.filter(Boolean).length;
+  const n=Math.min(p.nDays||p.days.filter(Boolean).length,na),sp=SPORTS(p),need=sp.includes('bike')&&sp.includes('run')?2:1;
+  const lc=[5,6,4,0,1,2,3].filter(d=>av[d]&&LOK(p,d)).slice(0,Math.min(need,n));
+  return pickDays(n,lc,av).map((v,d)=>v&&LOK(p,d)?2:v)}
 /* Number keypads have no colon: digits fill in like a stopwatch (20800 -> 2:08:00); a typed . , or space counts as a colon. */
 function fmtTimeInput(t){let v=t.value;if(!v.trim()){delete t.dataset.manual;return}
   if(/[.,\s]/.test(v)){t.dataset.manual='1';v=v.replace(/[.,\s]/g,':')}
@@ -275,6 +283,8 @@ function buildPlan(p){
   const taper=Math.max(1,Math.min(R.taper,Math.floor(n/4)||1)),peak=n>=10?2:n>=6?1:0;
   const rest=Math.max(0,n-taper-peak),base=Math.round(rest*.45);
   const avail=[0,1,2,3,4,5,6].filter(d=>p.days[d]>0),longs=avail.filter(d=>p.days[d]===2);
+  // every day the athlete could train; the usual pattern (avail) is a subset, and a week may swap days within this
+  const AV=[0,1,2,3,4,5,6].filter(d=>AVL(p,d)||p.days[d]>0),LO=d=>LOK(p,d)||p.days[d]===2;
   const pref=(list,order)=>order.find(d=>list.includes(d));
   const circ=(a,b)=>Math.min(Math.abs(a-b),7-Math.abs(a-b));
   let rideDay=pref(longs,[5,6,4,0,1,2,3]);if(rideDay==null)rideDay=pref(avail,[5,6,4,0,1,2,3]);
@@ -308,7 +318,8 @@ function buildPlan(p){
     const wsI=addDays(start,7*i),pk=p.prac&&p.prac.date&&!last&&dayDiff(wsI,p.prac.date)>=0&&dayDiff(wsI,p.prac.date)<7?dow(p.prac.date):-1;
     const tot=p.peakH*60*f*(pk>=0?.8:1);let ss=[];
     if(last){
-      const rd=dow(p.raceDate),pre=avail.filter(d=>d<rd).reverse();
+      // race week: the available days closest before the race, as many as a normal week less the race day
+      const rd=dow(p.raceDate),pre=AV.filter(d=>d<rd).reverse().slice(0,Math.max(1,N-1));
       const seq=[['run','open',20],['bike','open',40],['swim','open',30],['run','easy',30],['bike','easy',45],['swim','tech',30]].filter(o=>has(o[0]));
       pre.forEach((d,j)=>{if(seq[j])ss.push({sp:seq[j][0],k:seq[j][1],min:seq[j][2],d})});
       ss.push({sp:'race',k:'race',min:Math.round(racePred(p).total/60),d:rd});
@@ -333,12 +344,14 @@ function buildPlan(p){
       // placement
       const hard=s=>s.k==='q'||s.k==='key'||s.k==='test';const sportOf=s=>s.sp==='brick'?'bike':s.sp;
       const byDay=d=>ss.filter(s=>s.d===d);
+      // places the week's sessions on the given days and scores the result (lower is better)
+      const place=days=>{let score=0;ss.forEach(s=>{delete s.d});
       ss.forEach(s=>{if(s.k==='long'){s.d=sportOf(s)==='bike'?rideDay:runDay}});
       const queue=ss.filter(s=>s.d==null).sort((a,b)=>(hard(b)?2:b.sp==='strength'?0:1)-(hard(a)?2:a.sp==='strength'?0:1));
       queue.forEach(s=>{let best=null,bs=1e9;
-        avail.forEach(d=>{const on=byDay(d),cnt=on.filter(o=>o.sp!=='strength').length;let sc=0;
+        days.forEach(d=>{const on=byDay(d),cnt=on.filter(o=>o.sp!=='strength').length;let sc=0;
           const adj=[(d+6)%7,(d+1)%7].flatMap(byDay);
-          if(s.sp==='strength'){sc=on.length*20+(p.days[d]===2?30:0)+(on.some(o=>o.k==='long')?40:0)+(on.some(o=>o.sp==='strength')?200:0)+(adj.some(o=>o.sp==='strength')?30:0)+(on.length>=2?500:0)}
+          if(s.sp==='strength'){sc=on.length*20+(LO(d)?30:0)+(on.some(o=>o.k==='long')?40:0)+(on.some(o=>o.sp==='strength')?200:0)+(adj.some(o=>o.sp==='strength')?30:0)+(on.length>=2?500:0)}
           else{if(cnt>=2)sc+=1000;if(cnt>=1&&!p.doubles)sc+=1000;sc+=cnt*20;
             if(on.some(o=>sportOf(o)===s.sp))sc+=60;
             if(s.sp==='run'&&on.some(o=>o.sp==='brick'))sc+=60; // the brick already includes a run
@@ -347,10 +360,38 @@ function buildPlan(p){
             if(adj.some(o=>sportOf(o)===s.sp))sc+=6}
           if(sc<bs){bs=sc;best=d}});
         s.d=best});
+        return rate(days)};
+      // rates a finished week (lower is better), independent of the order sessions were placed in
+      const rate=days=>{let sc=0;const tough=o=>hard(o)||o.k==='long';
+        days.forEach(d=>{const on=byDay(d),tr=on.filter(o=>o.sp!=='strength'),prev=byDay((d+6)%7);
+          if(tr.length>2)sc+=1000;if(tr.length>1&&!p.doubles)sc+=1000;sc+=Math.max(0,tr.length-1)*15;
+          const nh=tr.filter(hard).length;if(nh>1)sc+=40*(nh-1);if(nh&&tr.some(o=>o.k==='long'))sc+=40;
+          if(tr.some(tough)&&prev.some(tough))sc+=12;
+          const sp=tr.map(sportOf);if(new Set(sp).size<sp.length)sc+=60;
+          if(tr.some(o=>o.sp==='brick')&&tr.some(o=>o.sp==='run'))sc+=60;
+          if(tr.some(o=>o.sp==='run'&&o.k==='q')&&(d+1)%7===runDay)sc+=15;
+          if(tr.some(o=>o.k==='test')&&prev.some(tough))sc+=25;
+          const stn=on.filter(o=>o.sp==='strength'&&o.k==='str').length;if(stn>1)sc+=200;
+          if(stn){if(tr.some(o=>o.k==='long'))sc+=15;if(nh)sc+=10;if(prev.some(o=>o.k==='str'))sc+=30}});
+        // spread: rest days between sessions rather than bunched together
+        const on=days.slice().sort((a,b)=>a-b);on.forEach((d,j)=>{const g=(j+1<on.length?on[j+1]:on[0]+7)-d;sc+=g*g*3});
+        return sc};
+      // try the usual days first, then every other set of the same size from the available days that keeps
+      // the long days (and a practice race day); a different set must earn its place by a clearly better week
+      const must=[...new Set([rideDay,runDay].concat(pk>=0&&AV.includes(pk)?[pk]:[]))];
+      const cands=must.every(d=>avail.includes(d))?[avail]:[];
+      if(AV.length>N){const free=AV.filter(d=>!must.includes(d)),k=N-must.length;
+        const rc=(st,pick)=>{if(pick.length===k){const c=must.concat(pick).sort((a,b)=>a-b);if(c.join()!==avail.join())cands.push(c);return}
+          for(let j=st;j<free.length;j++){pick.push(free[j]);rc(j+1,pick);pick.pop()}};
+        if(k>=0)rc(0,[])}
+      if(!cands.length)cands.push(avail);
+      let bestSet=cands[0],bestSc=1e9;
+      cands.forEach(c=>{const sc=place(c)+c.filter(d=>!avail.includes(d)).length*20;if(sc<bestSc){bestSc=sc;bestSet=c}});
+      place(bestSet);
       // durations
       const W={long:{bike:2.4,run:1.7},q:1,easy:.85,key:1,end:1.1,tech:.9};
       // swim-only plans have no "long" session type, so swims on long days carry the distance
-      const wt=s=>s.k==='long'?W.long[sportOf(s)]:(W[s.k]||1)*(single&&s.sp==='swim'&&p.days[s.d]===2?2.2:1);
+      const wt=s=>s.k==='long'?W.long[sportOf(s)]:(W[s.k]||1)*(single&&s.sp==='swim'&&LO(s.d)?2.2:1);
       // long sessions follow their own progression toward the race-specific longest ride and run;
       // the other sessions of that sport split what is left of the sport's weekly time
       const prog=i<rest?(rest>1?i/(rest-1):1):1;
@@ -359,9 +400,9 @@ function buildPlan(p){
         const lg=list.find(s=>s.k==='long'),others=list.filter(s=>s!==lg);
         if(lg){const capL=sp==='bike'?R.longRide*[.85,.95,1][SL(p,'bike')]:R.longRun*[.9,1,1][SL(p,'run')];
           let m=Math.min(capL*lf,tot*(sp==='bike'?(single?.5:.45):single?.35:sports.length===2?.3:.25));
-          if(p.days[lg.d]!==2)m=Math.min(m,p.wkMax);lg.min=r5(Math.max(m,sp==='bike'?45:30));pool-=lg.min}
+          if(!LO(lg.d))m=Math.min(m,p.wkMax);lg.min=r5(Math.max(m,sp==='bike'?45:30));pool-=lg.min}
         const sumW=others.reduce((a,s)=>a+wt(s),0);
-        others.forEach(s=>{const onLong=p.days[s.d]===2,min=(s.k==='q'?{swim:30,bike:40,run:35}:{swim:25,bike:30,run:20})[sp];
+        others.forEach(s=>{const onLong=LO(s.d),min=(s.k==='q'?{swim:30,bike:40,run:35}:{swim:25,bike:30,run:20})[sp];
           let cap=sp==='swim'?(R.swimCap||(R.tier==='full'?90:75)):sp==='run'?75:90;if(!onLong)cap=Math.min(cap,p.wkMax);
           s.min=r5(clamp(pool*wt(s)/sumW,min,cap))})});
       if(pk>=0){ss=ss.filter(s=>s.d!==pk);
@@ -481,7 +522,7 @@ function sportMins(wk,doneOnly){const o={swim:0,bike:0,run:0,strength:0};wk.w.fo
   if(w.sp==='brick'){const tot=w.min+w.x;o.bike+=m*w.min/tot;o.run+=m*w.x/tot}else o[w.sp]+=m});return o}
 const sum=o=>Object.values(o).reduce((a,b)=>a+b,0);
 function newDraft(){const t=today(),start=dow(t)===0?t:addDays(monday(t),7);
-  return{race:'olympic',raceName:'',raceDate:addDays(start,7*15+5),level:'intermediate',startDate:start,days:[1,1,1,1,0,2,2],wkMax:60,doubles:true,strength:true,peakH:9.5,peakAuto:true,curH:'',lv:{},prac:{date:'',name:''},
+  return{race:'olympic',raceName:'',raceDate:addDays(start,7*15+5),level:'intermediate',startDate:start,days:[1,1,1,1,0,2,2],avail:[true,true,true,true,true,true,true],longOK:[false,false,false,false,false,true,true],nDays:5,wkMax:60,doubles:true,strength:true,peakH:9.5,peakAuto:true,curH:'',lv:{},prac:{date:'',name:''},
     units:'mi',pool:'yd',bikeMode:'power',fit:{runD:'5000',runT:'',swimD:'400',swimT:'',bikeSpd:'',ftp:'',lthr:''}}}
 
 /* ---------- views ---------- */
@@ -564,7 +605,7 @@ window.onAppUpdate=(state,v)=>{
   else if(state==='error'){ui.upd=ui.manual?'Could not reach the update site. Check your connection.':ui.upd}
   ui.manual=false;if(ui.tab==='settings'&&!ui.sheet&&!ui.live&&!ui.draft)render()};
 function viewSettings(){const p=S.profile,pl=S.plan;
-  let h=`<div class="panel"><h2>Your plan</h2><p>${esc(RACES[p.race].name)} on ${fmtDate(p.raceDate)} · ${pl.weeks.length} weeks · peak ${p.peakH} h/week<br><span class="muted small">Training ${p.days.map((d,i)=>d?DN[i]+(d===2?' (long)':''):null).filter(Boolean).join(', ')}.${SPORTS(p).includes('bike')?' Long ride '+DN[pl.rideDay]+'.':''}${SPORTS(p).includes('run')?' Long run '+DN[pl.runDay]+'.':''}</span></p>
+  let h=`<div class="panel"><h2>Your plan</h2><p>${esc(RACES[p.race].name)} on ${fmtDate(p.raceDate)} · ${pl.weeks.length} weeks · peak ${p.peakH} h/week<br><span class="muted small">${p.avail&&p.avail.filter(Boolean).length>p.days.filter(Boolean).length?'Usually training':'Training'} ${p.days.map((d,i)=>d?DN[i]+(d===2?' (long)':''):null).filter(Boolean).join(', ')}.${SPORTS(p).includes('bike')?' Long ride '+DN[pl.rideDay]+'.':''}${SPORTS(p).includes('run')?' Long run '+DN[pl.runDay]+'.':''}</span></p>
     <button class="btn block" data-act="editPlan">Change race, days or hours</button><p class="muted small">Rebuilds from next week onward. Completed weeks and your log are kept.</p></div>`;
   h+=`<div class="panel"><h2>Units</h2><div class="stack"><span class="label">Run and bike</span><div class="chips">${chip('Miles','unit','data-k="units" data-v="mi"',p.units==='mi')}${chip('Kilometres','unit','data-k="units" data-v="km"',p.units==='km')}</div><span class="label">Pool</span><div class="chips">${chip('Yards','unit','data-k="pool" data-v="yd"',p.pool==='yd')}${chip('Metres','unit','data-k="pool" data-v="m"',p.pool==='m')}</div><span class="label">Bike targets</span><div class="chips">${chip('Power','mode','data-v="power"',p.bikeMode==='power')}${chip('Heart rate','mode','data-v="hr"',p.bikeMode==='hr')}${chip('Speed','mode','data-v="speed"',p.bikeMode==='speed')}${chip('Feel','mode','data-v="rpe"',p.bikeMode==='rpe')}</div></div></div>`;
   const A=ui.adapt||(ui.adapt={days:7,mode:'pause',ask:false});
@@ -596,12 +637,17 @@ function viewWizard(){const D=ui.draft,R=RACES[D.race],mode=ui.wizMode,step=ui.w
     h+=`<div class="panel"><span class="label">Practice race (optional)</span><div class="row"><label class="field"><span>Name</span><input type="text" id="f-pname" data-f="prac.name" value="${esc(D.prac.name)}" placeholder="e.g. local sprint"></label><label class="field"><span>Date</span><input type="date" id="f-pdate" data-f="prac.date" value="${esc(D.prac.date)}"></label></div><p class="muted small">A shorter event before your main race, used as a rehearsal. That week is lightened, the day before is easy, and the race replaces that day's training.</p></div>`;
     h+=`<div class="panel"><span class="label">Experience</span><div class="chips">${chip('Beginner','set','data-k="level" data-v="beginner"',D.level==='beginner')}${chip('Intermediate','set','data-k="level" data-v="intermediate"',D.level==='intermediate')}${chip('Advanced','set','data-k="level" data-v="advanced"',D.level==='advanced')}</div><p class="muted small">Your overall endurance training background. It sets weekly hours and how many sessions you get.</p>
       ${SPORTS(D).length>1?SPORTS(D).map(s=>`<span class="label" style="color:var(--${s})">${SPN[s]} experience</span><div class="chips">${LEVELS.map((l,i)=>chip(['Beginner','Intermediate','Advanced'][i],'setlv','data-k="'+s+'" data-v="'+l+'"',SL(D,s)===i)).join('')}</div>`).join('')+'<p class="muted small">Set each sport separately if they differ. A sport you are newer to gets gentler intensity, shorter long sessions, and, if it is clearly your weakest, an extra session and more of each week.</p>':''}</div>`;
-  }else if(step===1){const N=D.days.filter(Boolean).length;
-    const LG=D.days.map((s,i)=>s===2?i:-1).filter(i=>i>=0);
-    h+=`<div class="stack" style="gap:6px"><span class="label">Step 2 of 3</span><h1>Your week</h1><p class="muted">Choose how many days you want to train and which days can be long. I spread the rest of the week out for you.</p></div>`;
+  }else if(step===1){
+    if(!D.avail){D.avail=D.days.map(x=>x>0);D.longOK=D.days.map(x=>x===2);D.nDays=D.days.filter(Boolean).length}
+    D.days=weekPattern(D);const N=D.nDays,NA=D.avail.filter(Boolean).length,usual=D.days.map((s,i)=>s?DN[i]+(s===2?' (long)':''):null).filter(Boolean);
+    h+=`<div class="stack" style="gap:6px"><span class="label">Step 2 of 3</span><h1>Your week</h1><p class="muted">Tell me how often you want to train and when you can. I choose the best days for your goal, and move them in weeks that need it.</p></div>`;
     h+=`<div class="panel"><span class="label">Days a week</span><div class="chips">${[3,4,5,6,7].map(n=>chip(String(n),'nDays','data-v="'+n+'"',N===n)).join('')}</div>
-      <span class="label">Long days</span><div class="chips">${DN.map((d,i)=>chip(d,'longTog','data-d="'+i+'"',LG.includes(i))).join('')}</div><p class="muted small">Long days get your long ride and long run. Pick days with the most free time, usually the weekend.</p></div>`;
-    h+=`<div class="panel"><span class="label">Fine-tune (optional)</span><p class="muted small" style="margin-top:0">Tap a day to cycle it: off, train, or long.</p><div class="tri">${D.days.map((s,i)=>`<button data-act="dayCycle" data-d="${i}" data-s="${s}" aria-label="${DN[i]}: ${['off','train','long'][s]}"><b>${DN[i]}</b><span>${['Off','Train','Long'][s]}</span></button>`).join('')}</div><p class="small ${N<3?'err':'muted'}">${N} training days a week${N<3?'. Choose at least 3 so each sport gets a session.':D.days.filter(d=>d===2).length?'.':'. No long days set, so long sessions are capped at your weekday limit.'}</p></div>`;
+      <span class="label">Days you can train</span><div class="chips">${DN.map((d,i)=>chip(d,'availTog','data-d="'+i+'"',!!D.avail[i])).join('')}</div>
+      <span class="label">Days with time for a long session</span><div class="chips">${DN.map((d,i)=>D.avail[i]?chip(d,'longTog','data-d="'+i+'"',!!D.longOK[i]):'').join('')}</div>
+      <p class="muted small">Long days get your long ride and long run, usually the weekend.</p></div>`;
+    h+=`<div class="panel"><span class="label">Your usual week</span><p style="margin:4px 0"><strong>${usual.join(', ')||'No days yet'}</strong></p>
+      ${NA<N?`<p class="small err">You can train on ${NA} day${NA===1?'':'s'} but asked for ${N}. Mark more days or train fewer.</p>`:NA>N?`<p class="muted small">Some weeks use a different ${NA-N===1?'day':'mix'} of your ${NA} available days: race week, a practice race, or a week whose workouts fit better that way, so hard sessions don't land back to back.</p>`:'<p class="muted small">Mark more days you could train and I can move sessions around in weeks that need it.</p>'}
+      ${D.days.some(d=>d===2)?'':'<p class="muted small">No long days set, so long sessions are capped at your weekday limit.</p>'}</div>`;
     h+=`<div class="panel"><span class="label">Longest session on a normal day</span><div class="chips">${[45,60,75,90].map(m=>chip(m+' min','setn','data-k="wkMax" data-v="'+m+'"',D.wkMax===m)).join('')}</div>
       <span class="label">Two sessions on some days</span><div class="chips">${chip('Yes, when needed','setb','data-k="doubles" data-v="1"',D.doubles)}${chip('One a day only','setb','data-k="doubles" data-v="0"',!D.doubles)}</div>
       <span class="label">Strength work</span><div class="chips">${chip('Include it','setb','data-k="strength" data-v="1"',D.strength)}${chip('Leave it out','setb','data-k="strength" data-v="0"',!D.strength)}</div>
@@ -723,8 +769,9 @@ function act(a,el){const D=ui.draft,v=el.dataset.v;
     case'setlv':D.lv=D.lv||{};D.lv[el.dataset.k]=v;break;
     case'setn':D[el.dataset.k]=+v;break;case'setb':D[el.dataset.k]=v==='1';break;
     case'weeks':D.raceDate=addDays(D.startDate,7*(+v-1)+5);break;
-    case'nDays':{const lg=D.days.map((s,i)=>s===2?i:-1).filter(i=>i>=0);D.days=pickDays(+v,lg.length||+v<3?lg:[5,6]);break}
-    case'longTog':{const i=+el.dataset.d,n=D.days.filter(Boolean).length;let lg=D.days.map((s,j)=>s===2?j:-1).filter(j=>j>=0);lg=lg.includes(i)?lg.filter(j=>j!==i):lg.concat(i);D.days=pickDays(Math.max(n,lg.length),lg);break}
+    case'nDays':D.nDays=+v;D.days=weekPattern(D);break;
+    case'availTog':{const i=+el.dataset.d;D.avail[i]=!D.avail[i];if(!D.avail[i])D.longOK[i]=false;D.days=weekPattern(D);break}
+    case'longTog':{const i=+el.dataset.d;D.longOK[i]=!D.longOK[i];D.days=weekPattern(D);break}
     case'updCheck':ui.manual=true;ui.upd='Checking…';try{Android.checkUpdate()}catch(e){ui.upd='Could not check for updates.'}break;
     case'updReload':try{Android.reload()}catch(e){}return;
     case'updHide':$('#updbar').hidden=true;return;
@@ -735,6 +782,7 @@ function act(a,el){const D=ui.draft,v=el.dataset.v;
     case'wizCancel':ui.draft=null;ui.err='';break;
     case'wizNext':{ui.err='';
       if(ui.wiz===0){const wks=Math.floor(dayDiff(D.startDate,monday(D.raceDate||'1970-01-01'))/7)+1;if(!D.raceDate||wks<2){ui.err='Pick a race date at least two weeks after your start date.';break}}
+      if(ui.wiz===1&&D.avail&&D.avail.filter(Boolean).length<D.nDays){ui.err='Mark at least '+D.nDays+' days you can train, or choose fewer days a week.';break}
       if(ui.wiz===1&&D.days.filter(Boolean).length<3){ui.err='Choose at least 3 training days.';break}
       if(ui.wiz===2){finishWizard();window.scrollTo(0,0);break}
       ui.wiz++;window.scrollTo(0,0);break}
