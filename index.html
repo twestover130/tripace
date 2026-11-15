@@ -610,7 +610,10 @@ async function initSync(){try{if(!window.claude||!window.claude.use)return;const
 function toast(t){const el=$('#toast');el.textContent=t;el.hidden=false;clearTimeout(toast.t);toast.t=setTimeout(()=>el.hidden=true,2400)}
 const curWeek=()=>S.plan?Math.floor(dayDiff(S.plan.start,today())/7):0;
 const wkStart=i=>addDays(S.plan.start,7*i);
-function findW(id){const i=+id.split('-')[0];const wk=S.plan.weeks[i];return{wk,i,w:wk.w.find(x=>x.id===id)}}
+/* workouts set up for a day outside the plan (before it starts, after race day) live in S.solo with their own date */
+const SOLO_WK={ph:'base',solo:true};
+function findW(id){if(id[0]==='s'){const L=S.solo||[];return{wk:Object.assign({w:L},SOLO_WK),i:-1,w:L.find(x=>x.id===id)}}
+  const i=+id.split('-')[0];const wk=S.plan.weeks[i];return{wk,i,w:wk.w.find(x=>x.id===id)}}
 function sportMins(wk,doneOnly){const o={swim:0,bike:0,run:0,strength:0};wk.w.forEach(w=>{if(w.sp==='race')return;const lg=S.log[w.id];if(doneOnly&&!(lg&&lg.s==='done'))return;const m=doneOnly&&lg.min?+lg.min:w.min+(w.x||0);
   if(w.sp==='brick'){const tot=w.min+w.x;o.bike+=m*w.min/tot;o.run+=m*w.x/tot}else o[w.sp]+=m});return o}
 const sum=o=>Object.values(o).reduce((a,b)=>a+b,0);
@@ -629,8 +632,9 @@ function summary(d,p){const rep=d.steps.find(s=>s.rep);if(rep){const a=rep.of[0]
   const t=target(main.z,p);return t?t.name+' · '+t.text:(main.note||'')}
 function viewToday(){const p=S.profile,pl=S.plan,n=pl.weeks.length,t=today();let cw=curWeek();
   const toRace=dayDiff(t,p.raceDate),R=RACES[p.race];
-  const day=ui.day||(cw<0?pl.start:cw>=n?p.raceDate:t);const wi=clamp(Math.floor(dayDiff(pl.start,day)/7),0,n-1),wk=pl.weeks[wi],ws=wkStart(wi);
-  const dd=dayDiff(ws,day);const list=wk.w.filter(w=>w.d===dd);
+  // always open on the real today, even before the plan starts or after race day, so a workout can be added for it
+  const day=ui.day||t;const wi=clamp(Math.floor(dayDiff(pl.start,day)/7),0,n-1),wk=pl.weeks[wi],ws=wkStart(wi);
+  const dd=dayDiff(ws,day);const list=wk.w.filter(w=>w.d===dd),solo=(S.solo||[]).filter(w=>w.date===day);
   const bigNum=toRace<0?'Done':toRace===0?'Go':toRace<21?toRace:Math.ceil(toRace/7),bigLab=toRace<0?'Race complete':toRace===0?'Race day':toRace<21?'days to race':'weeks to race';
   let h=`<div class="bib"><div class="stack" style="gap:4px;min-width:0"><span class="label">${esc(R.name)} · ${fmtDate(p.raceDate)}</span><h1>${esc(p.raceName||R.name)}</h1><span class="small" style="opacity:.8">Week ${clamp(cw+1,1,n)} of ${n} · ${PHASE[pl.weeks[clamp(cw,0,n-1)].ph]}${pl.weeks[clamp(cw,0,n-1)].rec?' · recovery':''}</span></div><div style="text-align:right"><div class="num big">${bigNum}</div><span class="label">${bigLab}</span></div></div>`;
   const miss=missed();
@@ -639,10 +643,10 @@ function viewToday(){const p=S.profile,pl=S.plan,n=pl.weeks.length,t=today();let
   h+=`<div class="panel"><div class="row"><button class="chip" data-act="week" data-n="-1" aria-label="Previous week">‹</button><span class="grow label" style="text-align:center">Week ${wi+1} · ${PHASE[wk.ph]}${wk.rec?' · recovery':''}</span><button class="chip" data-act="week" data-n="1" aria-label="Next week">›</button></div><div class="strip">`;
   for(let d=0;d<7;d++){const ds=addDays(ws,d);h+=`<button class="day${ds===t?' today':''}" data-act="day" data-d="${ds}" aria-pressed="${ds===day}"><span class="label">${DN[d][0]}</span><span class="dn">${pd(ds).getDate()}</span><span class="dots">${wk.w.filter(w=>w.d===d).map(w=>`<i class="dot c-${w.sp} ${S.log[w.id]?S.log[w.id].s:''}"></i>`).join('')}</span></button>`}
   h+=`</div></div>`;
-  h+=`<div class="stack"><div class="row"><h2 class="grow">${day===t?'Today':fmtDate(day)}</h2>${day!==t&&cw>=0&&cw<n?`<button class="chip" data-act="day" data-d="${t}">Back to today</button>`:''}</div>`;
-  h+=list.length?list.map(w=>woCard(w,wk)).join(''):`<div class="panel"><h3>Rest day</h3><p class="muted">No training planned. Recovery is when the fitness is built: sleep well, eat well, move a little.</p></div>`;
+  h+=`<div class="stack"><div class="row"><h2 class="grow">${day===t?'Today':fmtDate(day)}</h2>${day!==t?`<button class="chip" data-act="day" data-d="${t}">Back to today</button>`:''}</div>`;
+  h+=list.length||solo.length?list.map(w=>woCard(w,wk)).join('')+solo.map(w=>woCard(w,SOLO_WK)).join(''):`<div class="panel"><h3>Rest day</h3><p class="muted">No training planned. Recovery is when the fitness is built: sleep well, eat well, move a little.</p></div>`;
   h+=`</div>`;
-  h+=ui.quick?viewQuick():`<button class="btn line block" data-act="qOpen" data-d="${day}">Just do a workout</button>`;
+  h+=ui.quick?viewQuick():`<button class="btn line block" data-act="qOpen" data-d="${day}">Workout</button>`;
   const pm=sportMins(wk),dm=sportMins(wk,true);
   h+=`<div class="panel"><div class="row"><h2 class="grow">This week</h2><span class="num" style="font-size:1.3rem">${fmtDur(sum(dm))} / ${fmtDur(sum(pm))}</span></div><p class="muted small">${wk.rec?'Recovery week: about 30% less load so the last three weeks can sink in. ':''}${PHASE_NOTE[wk.ph]}</p>`;
   [['swim','Swim'],['bike','Bike'],['run','Run'],['strength','Strength']].forEach(([k,l])=>{if(pm[k])h+=`<div class="mrow c-${k}"><span class="label">${l}</span><div class="meter"><i style="width:${Math.min(100,dm[k]/pm[k]*100)}%"></i></div><span class="small num">${fmtDur(dm[k])} / ${fmtDur(pm[k])}</span></div>`});
@@ -651,7 +655,7 @@ function viewToday(){const p=S.profile,pl=S.plan,n=pl.weeks.length,t=today();let
 function qPlanned(day){const pl=S.plan,wi=Math.floor(dayDiff(pl.start,day)/7);if(wi<0||wi>=pl.weeks.length)return[];
   const wk=pl.weeks[wi],dd=dayDiff(wkStart(wi),day);return wk.w.filter(w=>w.d===dd&&!S.log[w.id]&&w.sp!=='race'&&!w.q)}
 function viewQuick(){const Q=ui.quick,p=S.profile,byT=qByT(Q),plan=qPlanned(Q.day);
-  let h=`<div class="panel" id="quick"><div class="row"><h3 class="grow">Just do a workout · ${Q.day===today()?'today':fmtDate(Q.day)}</h3><button class="chip" data-act="qCancel" aria-label="Close">✕</button></div>
+  let h=`<div class="panel" id="quick"><div class="row"><h3 class="grow">Workout · ${Q.day===today()?'today':fmtDate(Q.day)}</h3><button class="chip" data-act="qCancel" aria-label="Close">✕</button></div>
     <span class="label">Sport</span><div class="chips">${['run','bike','swim','strength'].map(s=>chip(s==='strength'?'Strength':SPN[s],'qSet','data-k="sp" data-v="'+s+'"',Q.sp===s)).join('')}</div>
     <span class="label">Type</span><div class="chips">${QK[Q.sp].map(([k,l])=>chip(l,'qSet','data-k="kind" data-v="'+k+'"',Q.kind===k)).join('')}</div>
     ${Q.sp==='strength'?'':`<div class="chips">${chip('How far','qSet','data-k="by" data-v="dist"',!byT)}${chip('How long','qSet','data-k="by" data-v="time"',byT)}</div>`}
@@ -797,9 +801,9 @@ function stepHtml(s,p,sp){
   const t=target(s.z,p);let q=s.q||'';if(s.dist)q=(s.reps>1?s.reps+' × ':'')+s.dist+' '+p.pool;else if(s.km)q=s.z==='r.tt'?'5K':fmtRun(s.km,p)+(s.min?' · ≈ '+fmtStep(Math.round(s.min)||1):'');else if(s.min)q=fmtStep(s.min);
   const z=[t?`${t.name}: ${t.text}`:'',s.rest?s.rest+'s rest':'',s.note||''].filter(Boolean).join(' · ');
   return`<div class="step"><span class="t">${esc(s.n)}</span><span class="q">${esc(q)}</span>${z?`<span class="z">${esc(z)}</span>`:''}</div>`}
-function viewSheet(){const{wk,i,w}=findW(ui.sheet),p=heatP(w),d=describe(w,wk,p),lg=S.log[w.id],date=addDays(wkStart(i),w.d),dist=estDist(w,d,p);
+function viewSheet(){const{wk,i,w}=findW(ui.sheet),p=heatP(w),d=describe(w,wk,p),lg=S.log[w.id],date=w.date||addDays(wkStart(i),w.d),dist=estDist(w,d,p);
   const label=w.sp==='brick'?'Brick':w.sp==='race'?(w.k==='prac'?'Practice race':'Race day'):w.sp[0].toUpperCase()+w.sp.slice(1);
-  let h=`<div class="card c-${w.sp}"><div class="row"><div class="grow stack" style="gap:2px"><span class="label" style="color:var(--c)">${label} · ${fmtDate(date)} · Week ${i+1}</span><h2>${esc(d.title)}</h2></div><button class="chip" data-act="close" aria-label="Close">✕</button></div>
+  let h=`<div class="card c-${w.sp}"><div class="row"><div class="grow stack" style="gap:2px"><span class="label" style="color:var(--c)">${label} · ${fmtDate(date)}${w.date?'':' · Week '+(i+1)}</span><h2>${esc(d.title)}</h2></div><button class="chip" data-act="close" aria-label="Close">✕</button></div>
     <div class="row"><span class="num" style="font-size:1.6rem">${w.k==='prac'?'Rehearsal':w.sp==='race'?fmtT(racePred(p).total):fmtDur(w.min+(w.x||0))}</span>${dist?`<span class="muted">${dist}</span>`:''}${lg?`<span class="pill">${lg.s==='done'?'Done':'Skipped'}</span>`:''}</div><p class="muted">${esc(d.why)}</p><div class="steps">${d.steps.map(s=>stepHtml(s,p,w.sp)).join('')}</div>`;
   if(ui.logging){const L=ui.logging,test=w.k==='test';
     h+=`<div class="stack" style="border-top:1px solid var(--line);padding-top:14px"><h3>Log this workout</h3>${test?`<label class="field"><span>${w.sp==='swim'?'400 time (m:ss)':w.sp==='run'?'5K time (m:ss)':'20-minute average power (watts)'}</span><input type="text" inputmode="numeric" ${w.sp!=='bike'?'data-time="1"':''} id="l-res" data-l="result" value="${esc(L.result)}" placeholder="${w.sp==='bike'?'e.g. 232':'e.g. '+(w.sp==='swim'?'7:10':'24:50')}"></label>`:''}
@@ -815,7 +819,7 @@ function viewSheet(){const{wk,i,w}=findW(ui.sheet),p=heatP(w),d=describe(w,wk,p)
       :`<div class="stack"><span class="label">Where are you riding?</span><div class="row"><button class="btn grow" data-act="liveStart">Outdoors</button><button class="btn grow" data-act="liveStartTrainer">On the trainer</button></div><span class="muted small">Outdoors tracks with GPS. On the trainer connects to your smart trainer over Bluetooth and sets its resistance to each step's target watts${S.profile.ftp?'':'. Add your FTP under Paces first, or the trainer is read but not controlled'}.</span></div>`;
     if(w.extra&&!lg)h+=`<button class="btn line block" data-act="delExtra">${w.was?'Remove this and bring back '+esc(describe(w.was,wk,p).title.toLowerCase()):w.q?'Remove this workout':'Remove this extra workout'}</button>`;
     h+=`<div class="row"><button class="btn ${NATIVE&&['run','bike','brick'].includes(w.sp)&&!(lg&&lg.s==='done')?'ghost ':''}grow" data-act="logStart">${lg&&lg.s==='done'?'Edit log':'Mark done'}</button>${lg?`<button class="btn ghost" data-act="unlog">Clear</button>`:`<button class="btn ghost" data-act="skip">Skip</button>`}</div>`;
-    if(w.sp!=='race'&&!(lg&&lg.s==='done'))h+=`<div class="stack"><span class="label">Move to another day this week</span><div class="chips">${DN.map((n,dI)=>chip(n,'move','data-d="'+dI+'"',w.d===dI)).join('')}</div></div>`}
+    if(w.sp!=='race'&&!w.date&&!(lg&&lg.s==='done'))h+=`<div class="stack"><span class="label">Move to another day this week</span><div class="chips">${DN.map((n,dI)=>chip(n,'move','data-d="'+dI+'"',w.d===dI)).join('')}</div></div>`}
   return h+`</div>`}
 
 /* ---------- render + events ---------- */
@@ -875,13 +879,16 @@ function act(a,el){const D=ui.draft,v=el.dataset.v;
     case'qReps':{const Q=ui.quick,r=quickPlan(Q,S.profile);if(r.reps)Q.reps=clamp(r.reps+ +el.dataset.n,1,20);break}
     case'qGo':{const Q=ui.quick,p=S.profile,pl=S.plan,dy=Q.day,wi=Math.floor(dayDiff(pl.start,dy)/7),r=quickPlan(Q,p);
       if(r.err){Q.err=r.err;break}
-      if(wi<0||wi>=pl.weeks.length){Q.err='That day is outside your plan.';break}
       if(qPlanned(dy).length&&!Q.rep){Q.err='Choose whether to replace the planned workout or do both.';break}
-      const wk=pl.weeks[wi],q={sp:Q.sp,kind:Q.kind,by:qByT(Q)?'time':'dist',amt:Q.amt,reps:Q.reps||null,repM:Q.repM||null};
+      const q={sp:Q.sp,kind:Q.kind,by:qByT(Q)?'time':'dist',amt:Q.amt,reps:Q.reps||null,repM:Q.repM||null};
+      // a day outside the plan (before it starts or after race day) gets a dated workout of its own
+      if(wi<0||wi>=pl.weeks.length){const w={id:'s-'+Date.now().toString(36),date:dy,d:dow(dy),sp:Q.sp,k:'quick',min:Math.max(5,Math.round(r.min)),x:0,v:0,extra:true,q};
+        S.solo=(S.solo||[]).concat(w);ui.quick=null;ui.sheet=w.id;ui.logging=null;save();toast('Workout ready');break}
+      const wk=pl.weeks[wi];
       const w={id:wi+'-q'+Date.now().toString(36),d:dayDiff(wkStart(wi),dy),sp:Q.sp,k:'quick',min:Math.max(5,Math.round(r.min)),x:0,v:wi,extra:true,q};
       if(Q.rep&&Q.rep!=='none'){const old=wk.w.find(x=>x.id===Q.rep);if(old){wk.w=wk.w.filter(x=>x!==old);w.was=old}}
       wk.w.push(w);wk.w.sort((a,b)=>a.d-b.d);ui.quick=null;ui.sheet=w.id;ui.logging=null;save();toast('Workout ready');break}
-    case'delExtra':{const{wk,w}=findW(ui.sheet);wk.w=wk.w.filter(x=>x!==w);if(w.was){wk.w.push(w.was);wk.w.sort((a,b)=>a.d-b.d)}ui.sheet=null;save();if(w.was)toast('Planned workout is back');break}
+    case'delExtra':{const{wk,w}=findW(ui.sheet);if(w.date){S.solo=(S.solo||[]).filter(x=>x!==w);delete S.log[w.id];ui.sheet=null;save();break}wk.w=wk.w.filter(x=>x!==w);if(w.was){wk.w.push(w.was);wk.w.sort((a,b)=>a.d-b.d)}ui.sheet=null;save();if(w.was)toast('Planned workout is back');break}
     case'heat':{const{w}=findW(ui.sheet);w.heat=+v||0;save();break}
     case'tune':{const p=S.profile;if(el.dataset.k==='run')p.vAdj=Math.round(((p.vAdj||0)+ +el.dataset.n)*10)/10;else p.cssAdj=(p.cssAdj||0)+ +el.dataset.n;derive(p);save();break}
     case'piAccept':{const p=S.profile,pi=paceInsight();if(pi.adj){p.vAdjPrev=p.vAdj||0;p.vAdj=Math.round(((p.vAdj||0)+pi.adj)*10)/10;Object.values(S.log).forEach(l=>{if(l.pr)l.prUsed=true});derive(p);save();toast('Run paces updated')}break}
