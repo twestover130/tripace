@@ -233,7 +233,10 @@ function derive(p){const f=p.fit;p.est={};if(!RACES[p.race])p.race='olympic';
   let st=parseT(f.swimT);if(st>0&&st/(+f.swimD/100)<40)st*=60;
   p.css=st>0?clamp(st/(+f.swimD/100)*(SWIM_FAC[f.swimD]||1.04),55,300):[140,115,95][SL(p,'swim')];p.est.swim=!(st>0);p.css=clamp(p.css+(p.cssAdj||0),55,300);
   const sp=parseFloat(f.bikeSpd);p.kph=sp>0?clamp(sp*(p.units==='mi'?1.609344:1),12,55):[22,27,32][SL(p,'bike')];p.est.bike=!(sp>0);
-  p.ftp=parseFloat(f.ftp)||0;p.lthr=parseFloat(f.lthr)||0;return p}
+  p.ftp=parseFloat(f.ftp)||0;
+  // threshold heart rate: run and bike differ (running sits about 5 bpm higher); a max HR gives an estimate of both
+  const mx=parseFloat(f.maxhr)||0,rl=parseFloat(f.rlthr)||0,bl=parseFloat(f.lthr)||0;
+  p.rlthr=rl||(bl?bl+5:mx?Math.round(mx*.89):0);p.lthr=bl||(rl?rl-5:mx?Math.round(mx*.85):0);p.hrEst=!rl||!bl;return p}
 const KM=p=>p.units==='mi'?1.609344:1;
 const fmtDist=(km,p)=>(km/KM(p)).toFixed(km/KM(p)<10?1:0)+' '+p.units;
 const RZ={'r.easy':['Easy',.62,.72],'r.steady':['Steady',.76,.82],'r.thr':['Threshold',.86,.89],'r.int':['Interval',.96,1.0],'r.rep':['Fast strides',1.05,1.10]};
@@ -250,8 +253,18 @@ const bzone=(z,p)=>z==='b.race'?['Race effort',...BRACE[TIER(p)]]:BZ[z];
 function runSecPerKm(p,z){if(z==='r.race'){const R=RACES[p.race],km=R.legs.filter(l=>l.sp==='run').reduce((a,l)=>a+l.d,0)||5;
     return predict(p.vdot,km*1000)*(R.legs.some(l=>l.sp==='bike')?RUN_FAT[R.tier]:1)/km}
   if(z==='r.tt')return 1000/vAt(p.vdot,.98)*60;const a=RZ[z]||RZ['r.easy'];return 1000/vAt(p.vdot,(a[1]+a[2])/2)*60}
+/* Heart-rate zones as fractions of threshold HR (run: Friel-style; bike: the BZ table's own % columns). */
+const RHZ={'r.easy':[.80,.89],'r.steady':[.90,.94],'r.thr':[.95,.99],'r.int':[1.0,1.04]};
+const RHRACE={sprint:[.97,1.02],olympic:[.93,.98],half:[.88,.93],full:[.83,.88]};
+const EASYZ=new Set(['r.easy','r.steady','b.rec','b.end']);
+/* A step is run by heart rate in Heart rate mode, or in Mixed mode when it is easy or steady. Strides and all-out tests never are. */
+function useHr(z,p){if(!z||z==='r.tt'||z==='b.tt'||z==='r.rep'||(z[0]!=='r'&&z[0]!=='b'))return false;
+  const m=z[0]==='r'?p.runMode:p.bikeMode;if(!(z[0]==='r'?p.rlthr:p.lthr))return false;return m==='hr'||(m==='mix'&&EASYZ.has(z))}
+function hrRange(z,p){if(z[0]==='r'){const a=z==='r.race'?RHRACE[TIER(p)]:RHZ[z];return a?[Math.round(a[0]*p.rlthr),Math.round(a[1]*p.rlthr)]:null}
+  const a=bzone(z,p);return a?[Math.round(a[3]*p.lthr/100),Math.round(a[4]*p.lthr/100)]:null}
 function target(z,p){
   if(!z)return null;
+  if(useHr(z,p)){const r=hrRange(z,p);if(r)return{name:z[0]==='r'?(z==='r.race'?'Race effort':RZ[z][0]):bzone(z,p)[0],text:r[0]+'–'+r[1]+' bpm'}}
   if(z[0]==='r'&&p.runMode==='rpe'&&z!=='r.tt'){const e={'r.easy':'RPE 3–4, conversational','r.steady':'RPE 5, steady','r.thr':'RPE 7, comfortably hard','r.int':'RPE 8–9, hard','r.rep':'RPE 9, fast and relaxed',
       'r.race':{sprint:'RPE 8',olympic:'RPE 7–8',half:'RPE 6–7',full:'RPE 5–6'}[TIER(p)]};return{name:z==='r.race'?'Race pace':RZ[z][0],text:e[z]}}
   if(z[0]==='r'){const u=KM(p),un='/'+p.units;
@@ -259,7 +272,7 @@ function target(z,p){
     if(z==='r.tt')return{name:'All out',text:'Even effort, finish empty'};
     const a=RZ[z];return{name:a[0],text:fmtT(1000/vAt(p.vdot,a[2])*60*u)+'–'+fmtT(1000/vAt(p.vdot,a[1])*60*u)+' '+un}}
   if(z[0]==='b'){let a;if(z==='b.race'){const r=BRACE[TIER(p)];a=['Race effort',...r]}else if(z==='b.tt')return{name:'All out',text:'Highest power you can hold evenly'};else a=BZ[z];
-    let mode=p.bikeMode;if(mode==='power'&&!p.ftp)mode='rpe';if(mode==='hr'&&!p.lthr)mode='rpe';
+    let mode=p.bikeMode;if(mode==='mix')mode=p.ftp?'power':'speed';if(mode==='power'&&!p.ftp)mode='rpe';if(mode==='hr'&&!p.lthr)mode='rpe';
     const text=mode==='power'?Math.round(a[1]*p.ftp)+'–'+Math.round(a[2]*p.ftp)+' W':mode==='hr'?Math.round(a[3]*p.lthr/100)+'–'+Math.round(a[4]*p.lthr/100)+' bpm':mode==='speed'?(bikeMs(p,a[1])*3.6/KM(p)).toFixed(1)+'–'+(bikeMs(p,a[2])*3.6/KM(p)).toFixed(1)+' '+p.units+'/h':a[5];
     return{name:a[0],text}}
   if(z[0]==='s'){const un='/100'+p.pool;
@@ -523,7 +536,7 @@ function sportMins(wk,doneOnly){const o={swim:0,bike:0,run:0,strength:0};wk.w.fo
 const sum=o=>Object.values(o).reduce((a,b)=>a+b,0);
 function newDraft(){const t=today(),start=dow(t)===0?t:addDays(monday(t),7);
   return{race:'olympic',raceName:'',raceDate:addDays(start,7*15+5),level:'intermediate',startDate:start,days:[1,1,1,1,0,2,2],avail:[true,true,true,true,true,true,true],longOK:[false,false,false,false,false,true,true],nDays:5,wkMax:60,doubles:true,strength:true,peakH:9.5,peakAuto:true,curH:'',lv:{},prac:{date:'',name:''},
-    units:'mi',pool:'yd',bikeMode:'power',fit:{runD:'5000',runT:'',swimD:'400',swimT:'',bikeSpd:'',ftp:'',lthr:''}}}
+    units:'mi',pool:'yd',bikeMode:'power',fit:{runD:'5000',runT:'',swimD:'400',swimT:'',bikeSpd:'',ftp:'',lthr:'',rlthr:'',maxhr:''}}}
 
 /* ---------- views ---------- */
 const chip=(label,act,attrs,on)=>`<button class="chip" data-act="${act}" ${attrs} aria-pressed="${on}">${label}</button>`;
@@ -571,10 +584,10 @@ function viewPaces(){const p=S.profile,u=KM(p),R=RACES[p.race],r=racePred(p);
   const SP=SPORTS(p);
   if(SP.includes('swim'))h+=`<div class="panel"><div class="row"><h2 class="grow" style="color:var(--swim)">Swim</h2>${p.est.swim?'<span class="pill">Estimated from level</span>':''}</div><table><tr><th>Zone</th><th class="r">Pace /100 ${p.pool}</th></tr>${['s.easy','s.steady','s.css','s.fast','s.race'].map(z=>{const t=target(z,p);return`<tr><td>${t.name}</td><td class="r">${t.text.replace(/ \/.*/,'')}</td></tr>`}).join('')}</table>
     <p class="muted small">Equivalent times: ${[100,400,p.pool==='yd'?1650:1500].map(d=>d+' '+p.pool+' '+fmtT(p.css/(SWIM_FAC[d])*d/100)).join(' · ')}</p></div>`;
-  let mode=p.bikeMode;const note=mode==='power'&&!p.ftp?'Add your FTP to see watt targets. Showing effort for now.':mode==='hr'&&!p.lthr?'Add your threshold heart rate to see bpm targets. Showing effort for now.':mode==='speed'?'Flat-road speeds in calm air, scaled from your steady 1-hour speed. On hills or in wind, hold the effort, not the number.':'';
-  if(SP.includes('bike'))h+=`<div class="panel"><div class="row"><h2 class="grow" style="color:var(--bike)">Bike</h2>${p.est.bike?'<span class="pill">Speed estimated</span>':''}</div><div class="chips">${chip('Power','mode','data-v="power"',mode==='power')}${chip('Heart rate','mode','data-v="hr"',mode==='hr')}${chip('Speed','mode','data-v="speed"',mode==='speed')}${chip('Feel','mode','data-v="rpe"',mode==='rpe')}</div>${note?`<p class="small" style="color:var(--warn)">${note}</p>`:''}<table><tr><th>Zone</th><th class="r">Target</th></tr>${['b.rec','b.end','b.tempo','b.ss','b.thr','b.vo2','b.race'].map(z=>{const t=target(z,p);return`<tr><td>${t.name}</td><td class="r">${t.text}</td></tr>`}).join('')}</table>
+  let mode=p.bikeMode;const note=mode==='power'&&!p.ftp?'Add your FTP to see watt targets. Showing effort for now.':(mode==='hr'||mode==='mix')&&!p.lthr?'Add your threshold or max heart rate to see bpm targets. Showing '+(mode==='mix'?'effort for easy rides':'effort')+' for now.':mode==='speed'?'Flat-road speeds in calm air, scaled from your steady 1-hour speed. On hills or in wind, hold the effort, not the number.':'';
+  if(SP.includes('bike'))h+=`<div class="panel"><div class="row"><h2 class="grow" style="color:var(--bike)">Bike</h2>${p.est.bike?'<span class="pill">Speed estimated</span>':''}</div><div class="chips">${chip('Power','mode','data-v="power"',mode==='power')}${chip('Heart rate','mode','data-v="hr"',mode==='hr')}${chip('Speed','mode','data-v="speed"',mode==='speed')}${chip('Mixed','mode','data-v="mix"',mode==='mix')}${chip('Feel','mode','data-v="rpe"',mode==='rpe')}</div>${mode==='mix'?`<p class="muted small">Recovery and endurance rides by heart rate; tempo and harder by ${p.ftp?'power':'speed'}.</p>`:''}${note?`<p class="small" style="color:var(--warn)">${note}</p>`:''}<table><tr><th>Zone</th><th class="r">Target</th></tr>${['b.rec','b.end','b.tempo','b.ss','b.thr','b.vo2','b.race'].map(z=>{const t=target(z,p);return`<tr><td>${t.name}</td><td class="r">${t.text}</td></tr>`}).join('')}</table>
     <p class="muted small">${p.ftp?'FTP '+p.ftp+' W · ':''}${p.lthr?'Threshold HR '+p.lthr+' bpm · ':''}Steady speed ${(p.kph/u).toFixed(1)} ${p.units}/h</p></div>`;
-  if(SP.includes('run'))h+=`<div class="panel"><div class="row"><h2 class="grow" style="color:var(--run)">Run</h2>${p.est.run?'<span class="pill">Estimated from level</span>':''}</div><table><tr><th>Zone</th><th class="r">Pace /${p.units}</th></tr>${['r.easy','r.steady','r.thr','r.int','r.race'].map(z=>{const t=target(z,p);return`<tr><td>${t.name}${z==='r.race'&&SP.includes('bike')?' (off the bike)':''}</td><td class="r">${t.text.replace(/ \/.*/,'')}</td></tr>`}).join('')}</table>
+  if(SP.includes('run'))h+=`<div class="panel"><div class="row"><h2 class="grow" style="color:var(--run)">Run</h2>${p.est.run?'<span class="pill">Estimated from level</span>':''}</div><table><tr><th>Zone</th><th class="r">${p.runMode==='hr'||p.runMode==='mix'?'Target':'Pace /'+p.units}</th></tr>${['r.easy','r.steady','r.thr','r.int','r.race'].map(z=>{const t=target(z,p);return`<tr><td>${t.name}${z==='r.race'&&SP.includes('bike')?' (off the bike)':''}</td><td class="r">${t.text.replace(/ \/.*/,'')}</td></tr>`}).join('')}</table>
     <p class="muted small">Stand-alone race equivalents: ${[[1609.344,'1 mile'],[5000,'5K'],[10000,'10K'],[21097.5,'Half'],[42195,'Marathon']].map(a=>a[1]+' '+fmtT(predict(p.vdot,a[0]))).join(' · ')}</p></div>`;
   if(SP.includes('run')){const pi=paceInsight();
     h+=`<div class="panel"><h2>Pace insights</h2><p><strong>${pi.title}</strong><br><span class="muted">${pi.text}</span></p>${pi.adj?`<button class="btn block" data-act="piAccept">Update my run paces</button>`:''}${p.vAdjPrev!=null?`<button class="btn line block" data-act="piRevert">Undo the last pace change</button>`:''}
@@ -607,7 +620,7 @@ window.onAppUpdate=(state,v)=>{
 function viewSettings(){const p=S.profile,pl=S.plan;
   let h=`<div class="panel"><h2>Your plan</h2><p>${esc(RACES[p.race].name)} on ${fmtDate(p.raceDate)} · ${pl.weeks.length} weeks · peak ${p.peakH} h/week<br><span class="muted small">${p.avail&&p.avail.filter(Boolean).length>p.days.filter(Boolean).length?'Usually training':'Training'} ${p.days.map((d,i)=>d?DN[i]+(d===2?' (long)':''):null).filter(Boolean).join(', ')}.${SPORTS(p).includes('bike')?' Long ride '+DN[pl.rideDay]+'.':''}${SPORTS(p).includes('run')?' Long run '+DN[pl.runDay]+'.':''}</span></p>
     <button class="btn block" data-act="editPlan">Change race, days or hours</button><p class="muted small">Rebuilds from next week onward. Completed weeks and your log are kept.</p></div>`;
-  h+=`<div class="panel"><h2>Units</h2><div class="stack"><span class="label">Run and bike</span><div class="chips">${chip('Miles','unit','data-k="units" data-v="mi"',p.units==='mi')}${chip('Kilometres','unit','data-k="units" data-v="km"',p.units==='km')}</div><span class="label">Pool</span><div class="chips">${chip('Yards','unit','data-k="pool" data-v="yd"',p.pool==='yd')}${chip('Metres','unit','data-k="pool" data-v="m"',p.pool==='m')}</div><span class="label">Bike targets</span><div class="chips">${chip('Power','mode','data-v="power"',p.bikeMode==='power')}${chip('Heart rate','mode','data-v="hr"',p.bikeMode==='hr')}${chip('Speed','mode','data-v="speed"',p.bikeMode==='speed')}${chip('Feel','mode','data-v="rpe"',p.bikeMode==='rpe')}</div></div></div>`;
+  h+=`<div class="panel"><h2>Units</h2><div class="stack"><span class="label">Run and bike</span><div class="chips">${chip('Miles','unit','data-k="units" data-v="mi"',p.units==='mi')}${chip('Kilometres','unit','data-k="units" data-v="km"',p.units==='km')}</div><span class="label">Pool</span><div class="chips">${chip('Yards','unit','data-k="pool" data-v="yd"',p.pool==='yd')}${chip('Metres','unit','data-k="pool" data-v="m"',p.pool==='m')}</div><span class="label">Bike targets</span><div class="chips">${chip('Power','mode','data-v="power"',p.bikeMode==='power')}${chip('Heart rate','mode','data-v="hr"',p.bikeMode==='hr')}${chip('Speed','mode','data-v="speed"',p.bikeMode==='speed')}${chip('Mixed','mode','data-v="mix"',p.bikeMode==='mix')}${chip('Feel','mode','data-v="rpe"',p.bikeMode==='rpe')}</div></div></div>`;
   const A=ui.adapt||(ui.adapt={days:7,mode:'pause',ask:false});
   h+=`<div class="panel"><h2>Unwell, injured or away</h2><p class="muted small">Adjusts the plan from today, then eases you back in over the following days. Logged workouts and your race are left alone.</p>
     <span class="label">For how long</span><div class="chips">${[3,5,7,10,14].map(n=>chip(n+' days','adaptSet','data-k="days" data-v="'+n+'"',A.days===n)).join('')}</div>
@@ -615,7 +628,15 @@ function viewSettings(){const p=S.profile,pl=S.plan;
     ${A.ask?`<p class="err">This changes your plan for the next ${A.days} days and cannot be undone, except by rebuilding the plan.</p><div class="row"><button class="btn grow" data-act="adaptApply">Adjust my plan</button><button class="btn ghost grow" data-act="adaptSet" data-k="ask" data-v="">Cancel</button></div>`:`<button class="btn line block" data-act="adaptSet" data-k="ask" data-v="1">Adjust my plan</button>`}</div>`;
   const V=appVer();if(V)h+=`<div class="panel"><h2>App updates</h2><p class="small">Version ${esc(fmtVer(V.v))}${V.src==='update'?' (updated over the air)':''}</p><p class="muted small">The app checks for updates each time it opens. New screens and plan changes download by themselves; you just restart the app to use them.</p>
     ${ui.upd?`<p class="small">${esc(ui.upd)}</p>`:''}${ui.updApk?`<button class="btn block" data-act="updApk">Download the new app</button>`:''}${ui.updReady?`<button class="btn block" data-act="updReload">Restart to update</button>`:`<button class="btn line block" data-act="updCheck">Check for updates</button>`}</div>`;
-  if(SPORTS(p).includes('run'))h+=`<div class="panel"><h2>Run targets</h2><div class="chips">${chip('Pace','runMode','data-v="pace"',p.runMode!=='rpe')}${chip('Effort (RPE)','runMode','data-v="rpe"',p.runMode==='rpe')}</div><p class="muted small">Effort suits trails, hills and treadmills, where pace means less.</p></div>`;
+  const rm=p.runMode||'pace',noHr='Add your threshold or max heart rate under Paces → Update my fitness to see bpm targets.';
+  if(SPORTS(p).includes('run'))h+=`<div class="panel"><h2>Run targets</h2><div class="chips">${chip('Pace','runMode','data-v="pace"',rm==='pace')}${chip('Heart rate','runMode','data-v="hr"',rm==='hr')}${chip('Mixed','runMode','data-v="mix"',rm==='mix')}${chip('Effort (RPE)','runMode','data-v="rpe"',rm==='rpe')}</div>
+    <p class="muted small">${{pace:'Pace zones from your recent race or test.',hr:'Every run by heart-rate zone. Strides and time trials stay by feel.',mix:'Easy, steady and long runs by heart rate; tempo, intervals and race pace by pace.',rpe:'Effort suits trails, hills and treadmills, where pace means less.'}[rm]}</p>
+    ${(rm==='hr'||rm==='mix')&&!p.rlthr?`<p class="small" style="color:var(--warn)">${noHr}</p>`:''}</div>`;
+  if(NATIVE){const dev=(()=>{try{return Android.hrDevice?Android.hrDevice():''}catch(e){return''}})();
+    h+=`<div class="panel"><h2>Heart rate</h2><span class="label">During workouts</span><div class="chips">${chip('Connect my watch or strap','hrm','data-v="1"',!!cfg.hrm)}${chip('Off','hrm','data-v="0"',!cfg.hrm)}</div>
+    ${cfg.hrm?`<p class="muted small"><strong>Garmin watch:</strong> turn on <em>Broadcast Heart Rate</em> before you start (in the watch's controls menu or heart-rate settings; the name varies a little by model).<br><strong>Whoop:</strong> in the Whoop app, open your device settings and turn on <em>Heart Rate Broadcast</em>.<br>Then start the workout here. The app finds it within a few seconds and remembers it for next time.</p>`:''}
+    <p class="small">${p.rlthr||p.lthr?`Threshold heart rate: ${SPORTS(p).includes('run')&&p.rlthr?'run '+p.rlthr+' bpm':''}${SPORTS(p).includes('run')&&SPORTS(p).includes('bike')&&p.rlthr&&p.lthr?' · ':''}${SPORTS(p).includes('bike')&&p.lthr?'bike '+p.lthr+' bpm':''}${p.hrEst?' (partly estimated)':''}`:'<span style="color:var(--warn)">No threshold or max heart rate yet. Add one under Paces → Update my fitness.</span>'}</p>
+    ${dev?`<div class="row"><span class="grow small">Remembered: ${esc(dev)}</span><button class="chip" data-act="hrForget">Forget</button></div>`:''}</div>`}
   if(NATIVE)h+=`<div class="panel"><h2>GPS workouts</h2><span class="label">Prompts during a run or ride</span><div class="chips">${chip('Voice and vibration','voice','data-v="1"',cfg.voice)}${chip('Vibration only','voice','data-v="0"',!cfg.voice)}</div></div>
     <div class="panel"><h2>Coach: your own LLM</h2><p class="muted small">Any OpenAI-compatible server works: Ollama, LM Studio, vLLM, llama.cpp. Your phone must be able to reach the address.</p>
     <label class="field"><span>Server address</span><input type="text" id="c-url" data-c="url" value="${esc(cfg.url)}" placeholder="http://192.168.1.20:11434/v1" autocapitalize="off"></label>
@@ -661,9 +682,12 @@ function viewWizard(){const D=ui.draft,R=RACES[D.race],mode=ui.wizMode,step=ui.w
     if(mode!=='fit')h+=`<div class="panel"><span class="label">Units</span><div class="chips">${chip('Miles','set','data-k="units" data-v="mi"',du==='mi')}${chip('Kilometres','set','data-k="units" data-v="km"',du==='km')}<span style="width:8px"></span>${chip('Yard pool','set','data-k="pool" data-v="yd"',pu==='yd')}${chip('Metre pool','set','data-k="pool" data-v="m"',pu==='m')}</div></div>`;
     const SPD=SPORTS(D);
     if(SPD.includes('swim'))h+=`<div class="panel"><h2 style="color:var(--swim)">Swim</h2><div class="row"><label class="field"><span>Distance (${pu})</span><select id="f-swimD" data-f="fit.swimD">${[100,200,400,500,1000,pu==='yd'?1650:1500].map(d=>`<option value="${d}"${+D.fit.swimD===d?' selected':''}>${d} ${pu}</option>`).join('')}</select></label><label class="field"><span>Best recent time</span><input type="text" inputmode="numeric" id="f-swimT" data-time="1" data-f="fit.swimT" value="${esc(D.fit.swimT)}" placeholder="e.g. 7:20"></label></div></div>`;
-    if(SPD.includes('bike'))h+=`<div class="panel"><h2 style="color:var(--bike)">Bike</h2><span class="label">How you measure effort</span><div class="chips">${chip('Power','set','data-k="bikeMode" data-v="power"',D.bikeMode==='power')}${chip('Heart rate','set','data-k="bikeMode" data-v="hr"',D.bikeMode==='hr')}${chip('Speed','set','data-k="bikeMode" data-v="speed"',D.bikeMode==='speed')}${chip('Feel','set','data-k="bikeMode" data-v="rpe"',D.bikeMode==='rpe')}</div><div class="row"><label class="field"><span>Avg speed, steady 1-hour ride (${du}/h)</span><input type="text" inputmode="decimal" id="f-spd" data-f="fit.bikeSpd" value="${esc(D.fit.bikeSpd)}" placeholder="e.g. ${du==='mi'?'17.5':'28'}"></label>
-      ${D.bikeMode==='power'?`<label class="field"><span>FTP (watts)</span><input type="text" inputmode="numeric" id="f-ftp" data-f="fit.ftp" value="${esc(D.fit.ftp)}" placeholder="e.g. 220"></label>`:''}${D.bikeMode==='hr'?`<label class="field"><span>Threshold heart rate (bpm)</span><input type="text" inputmode="numeric" id="f-lthr" data-f="fit.lthr" value="${esc(D.fit.lthr)}" placeholder="e.g. 162"></label>`:''}</div>${D.bikeMode==='power'?'<p class="muted small">No FTP yet? Leave it blank. Rides use effort level until your first FTP test, which the plan schedules for you.</p>':''}</div>`;
+    if(SPD.includes('bike'))h+=`<div class="panel"><h2 style="color:var(--bike)">Bike</h2><span class="label">How you measure effort</span><div class="chips">${chip('Power','set','data-k="bikeMode" data-v="power"',D.bikeMode==='power')}${chip('Heart rate','set','data-k="bikeMode" data-v="hr"',D.bikeMode==='hr')}${chip('Speed','set','data-k="bikeMode" data-v="speed"',D.bikeMode==='speed')}${chip('Mixed','set','data-k="bikeMode" data-v="mix"',D.bikeMode==='mix')}${chip('Feel','set','data-k="bikeMode" data-v="rpe"',D.bikeMode==='rpe')}</div><div class="row"><label class="field"><span>Avg speed, steady 1-hour ride (${du}/h)</span><input type="text" inputmode="decimal" id="f-spd" data-f="fit.bikeSpd" value="${esc(D.fit.bikeSpd)}" placeholder="e.g. ${du==='mi'?'17.5':'28'}"></label>
+      ${D.bikeMode==='power'?`<label class="field"><span>FTP (watts)</span><input type="text" inputmode="numeric" id="f-ftp" data-f="fit.ftp" value="${esc(D.fit.ftp)}" placeholder="e.g. 220"></label>`:''}</div>${D.bikeMode==='power'?'<p class="muted small">No FTP yet? Leave it blank. Rides use effort level until your first FTP test, which the plan schedules for you.</p>':''}</div>`;
     if(SPD.includes('run'))h+=`<div class="panel"><h2 style="color:var(--run)">Run</h2><div class="row"><label class="field"><span>Distance</span><select id="f-runD" data-f="fit.runD">${[[1609.344,'1 mile'],[5000,'5K'],[10000,'10K'],[21097.5,'Half marathon'],[42195,'Marathon']].map(a=>`<option value="${a[0]}"${+D.fit.runD===a[0]?' selected':''}>${a[1]}</option>`).join('')}</select></label><label class="field"><span>Best recent time</span><input type="text" inputmode="numeric" id="f-runT" data-time="1" data-f="fit.runT" value="${esc(D.fit.runT)}" placeholder="25:30 or 2:08:00"></label></div><p class="muted small">Type the digits only and the colons fill in: 2 0 8 0 0 becomes 2:08:00.</p></div>`;
+    if(SPD.includes('run')||SPD.includes('bike')){const hf=(id,k,l,ph)=>`<label class="field"><span>${l}</span><input type="text" inputmode="numeric" id="${id}" data-f="fit.${k}" value="${esc(D.fit[k]||'')}" placeholder="${ph}"></label>`;
+      h+=`<div class="panel"><h2>Heart rate (optional)</h2><div class="row">${SPD.includes('run')?hf('f-rlthr','rlthr','Run threshold HR','e.g. 168'):''}${SPD.includes('bike')?hf('f-lthr','lthr','Bike threshold HR','e.g. 162'):''}</div>${hf('f-maxhr','maxhr',"Max heart rate, if you don't know your thresholds",'e.g. 188')}
+      <p class="muted small">Threshold HR is about your average over the last 20 minutes of a hard 30-minute solo effort. Garmin and Whoop show an estimate of it, or of your max, in their apps. Used when you choose heart-rate targets.</p></div>`}
   }
   if(ui.err)h+=`<p class="err">${esc(ui.err)}</p>`;
   const lastStep=step===2;
@@ -758,6 +782,8 @@ function act(a,el){const D=ui.draft,v=el.dataset.v;
     case'liveFinishNo':ui.live.confirm=false;break;
     case'liveFinishYes':finishLive();break;
     case'voice':cfg.voice=v==='1';lsSet('tripace.coach',cfg);break;
+    case'hrm':cfg.hrm=v==='1';lsSet('tripace.coach',cfg);break;
+    case'hrForget':try{Android.hrForget()}catch(e){}toast('Forgotten. The next workout connects to whichever monitor is broadcasting.');break;
     case'chatSend':chatSend();break;
     case'chatClear':chat=[];lsSet('tripace.chat',chat);break;
     case'unit':{const p=S.profile,k=el.dataset.k;if(p[k]!==v){if(k==='units'&&parseFloat(p.fit.bikeSpd))p.fit.bikeSpd=(parseFloat(p.fit.bikeSpd)*(v==='km'?1.609344:1/1.609344)).toFixed(1);p[k]=v;derive(p);save()}break}
@@ -805,23 +831,29 @@ function flatSteps(d,p){const out=[];
     const t=target(s.z,p),sp=s.z[0]==='r'?'r':'b';let lo=0,hi=0;
     if(s.z==='r.race'){const v=1000/runSecPerKm(p,s.z);lo=v*.985;hi=v*1.015}
     else if(RZ[s.z]){lo=vAt(p.vdot,RZ[s.z][1])/60;hi=vAt(p.vdot,RZ[s.z][2])/60;if(s.z==='r.easy')lo=0;if(s.z==='r.rep'){lo=0;hi=0}}
-    else if(sp==='b'&&p.bikeMode==='speed'&&s.z!=='b.tt'){const a=bzone(s.z,p);lo=s.z==='b.rec'?0:bikeMs(p,a[1]);hi=bikeMs(p,a[2])}
+    else if(sp==='b'&&(p.bikeMode==='speed'||(p.bikeMode==='mix'&&!p.ftp))&&s.z!=='b.tt'){const a=bzone(s.z,p);lo=s.z==='b.rec'?0:bikeMs(p,a[1]);hi=bikeMs(p,a[2])}
     if(s.n.startsWith('Uphill')){lo=0;hi=0} // pace means little on a hill: run these by effort
+    // heart-rate steps: alerts use bpm instead of pace or speed; easy steps have no lower bound
+    // steps under 4 minutes (interval recoveries, short reps) are too short for heart rate to settle, so they get no bpm alerts
+    let hrLo=0,hrHi=0;if(useHr(s.z,p)){const r=hrRange(s.z,p);if(r&&!(s.min&&s.min<4)){hrHi=r[1];hrLo=s.z==='r.easy'||s.z==='b.rec'||s.z==='b.end'?0:r[0]}if(r){lo=0;hi=0}}
     const nm=s.n+(n?' '+i+' of '+n:'');
-    out.push({name:nm,sp,z:s.z,w:0,sec:s.min?Math.round(s.min*60):0,m:s.km?s.km*1000:0,lo,hi,target:t?t.name+' · '+t.text:'',
+    out.push({name:nm,sp,z:s.z,w:0,sec:s.min?Math.round(s.min*60):0,m:s.km?s.km*1000:0,lo,hi,hrLo,hrHi,target:t?t.name+' · '+t.text:'',
       say:nm+'. '+(s.km?s.km+' kilometres':speakDur(s.min))+'. '+(t?'Target '+speakTarget(t.text)+'.':'')})};
   d.steps.forEach(s=>add(s,0,0));return out}
 function startLive(mode){const trainer=mode==='trainer',indoor=!!mode,{wk,w}=findW(ui.sheet),p=heatP(w),steps=flatSteps(describe(w,wk,p),p);let r='';
   if(indoor)steps.forEach(s=>{s.lo=0;s.hi=0;if(s.m){s.sec=Math.round(s.m/1000*runSecPerKm(p,'r.tt'));s.m=0}});
   // on the trainer each bike step carries a watt target, the middle of its power zone; the FTP test is ridden freely
   if(trainer&&p.ftp)steps.forEach(s=>{if(s.sp!=='b'||!s.z||s.z==='b.tt')return;const a=bzone(s.z,p);s.w=Math.round(p.ftp*(a[1]+a[2])/2);
-    s.target=a[0]+' · '+s.w+' W';s.say=s.name+'. '+speakDur(s.sec/60)+'. Target '+s.w+' watts.'});
-  try{r=Android.start(JSON.stringify({id:w.id,unit:p.units,voice:cfg.voice,gps:!indoor,trainer,steps}))}catch(e){r='err'}
-  if(r==='perm'){toast(trainer?'Allow Bluetooth access, then tap again':'Allow location access, then tap Start again');return}
+    s.target=a[0]+' · '+s.w+' W';s.say=s.name+'. '+speakDur(s.sec/60)+'. Target '+s.w+' watts.';s.hrLo=0;s.hrHi=0});
+  const hrm=!!cfg.hrm;
+  try{r=Android.start(JSON.stringify({id:w.id,unit:p.units,voice:cfg.voice,gps:!indoor,trainer,hrm,steps}))}catch(e){r='err'}
+  if(r==='perm'){toast(trainer?'Allow Bluetooth access, then tap again':hrm?'Allow the permissions (Nearby devices is for heart rate), then tap Start again':'Allow location access, then tap Start again');return}
   if(r==='btoff'){toast('Turn on Bluetooth first');return}
   if(r==='gpsoff'){toast('Turn on Location in your phone settings first');return}
   if(r!=='ok'){toast('Could not start GPS tracking');return}
-  ui.live={id:w.id,steps,st:null,confirm:false,indoor,trainer};lsSet('tripace.live',{id:w.id,steps,indoor,trainer});ui.sheet=null;startPoll()}
+  ui.live={id:w.id,steps,st:null,confirm:false,indoor,trainer,hrm};lsSet('tripace.live',{id:w.id,steps,indoor,trainer,hrm});ui.sheet=null;startPoll()}
+const hrMsg=st=>({btoff:'Heart rate: Bluetooth is off.',scanning:'Heart rate: searching. Turn on heart-rate broadcast on your Garmin or Whoop.',connecting:'Heart rate: connecting to '+st.hrn+'…',
+  ready:'Heart rate: '+st.hrn+(st.hr>0?' connected':' connected, waiting for a reading'),error:'Heart rate: Bluetooth problem. Check that broadcast is on.'})[st.hrs]||'';
 const trainerMsg=st=>({off:'Starting Bluetooth…',scanning:'Searching for your trainer. Pedal a few strokes to wake it.',connecting:'Connecting to '+st.tname+'…',
   ready:st.tname+' connected · '+(st.tw>0?'ERG mode, resistance is set for you':'free ride, no power target on this step'),readonly:st.tname+' connected, but it does not accept resistance control.',
   error:'Bluetooth problem. Check Bluetooth is on and that no other app (Wahoo, Zwift) is connected to the trainer.'})[st.trainer]||'Starting Bluetooth…';
@@ -848,15 +880,16 @@ function finishLive(){const p=S.profile,id=ui.live.id,LS=ui.live.steps,TR=ui.liv
   ui.sheet=id;ui.logging={min:String(min),dist:km>0.05?(km/KM(p)).toFixed(2)+' '+p.units:'',rpe:0,note:avg?(TR?'Trainer':'GPS')+': average '+avg:'',result:'',pr};
   if(TR){const ps=(st.steps||[]).filter(a=>a[3]>0&&LS[a[0]]&&LS[a[0]].sp==='b'),sec=ps.reduce((a,b)=>a+b[2],0);
     if(sec>0)ui.logging.note='Trainer: average '+Math.round(ps.reduce((a,b)=>a+b[3]*b[2],0)/sec)+' W'+(avg?', '+avg:'');
-    const tt=ps.find(a=>LS[a[0]].name.startsWith('20-minute test'));if(tt&&w.k==='test')ui.logging.result=String(Math.round(tt[3]))}}
+    const tt=ps.find(a=>LS[a[0]].name.startsWith('20-minute test'));if(tt&&w.k==='test')ui.logging.result=String(Math.round(tt[3]))}
+  if(st.ahr>0)ui.logging.note=(ui.logging.note?ui.logging.note+' · ':'')+'average HR '+Math.round(st.ahr)+' bpm'}
 function renderLive(){const el=$('#live');if(!ui.live){el.hidden=true;liveKey='';return}
   const L=ui.live,st=L.st||{},p=S.profile,um=KM(p)*1000,n=L.steps.length,i=clamp(st.idx||0,0,n-1),s=L.steps[i],nx=L.steps[i+1],isRun=s.sp==='r',fin=!!st.finished,v=st.speed||0;
-  const key=[i,!!st.paused,fin,!!L.confirm].join(),tr=!!L.trainer&&!isRun;
+  const tr=!!L.trainer&&!isRun,hrMain=!tr&&s.hrHi>0&&!fin,hrOn=!!L.hrm,key=[i,!!st.paused,fin,!!L.confirm].join();
   if(key!==liveKey){liveKey=key;el.hidden=false;el.innerHTML=`<div class="lv c-${isRun?'run':'bike'}">
     <div class="stack" style="gap:4px"><span class="label" style="color:var(--c)">${fin?'All steps done':'Step '+(i+1)+' of '+n}${st.paused?' · paused':''}</span><h1>${fin?'Workout complete':esc(s.name)}</h1><p class="muted">${fin?'Keep moving to cool down, then finish.':esc(s.target||'By feel')}</p></div>
-    <div class="lvbig"><div><span class="label">${fin?'Total time':s.m?'Distance left':'Time left'}</span><div class="num" id="lv-rem"></div></div><div><span class="label">${tr?'Power, watts':isRun?'Pace /'+p.units:'Speed '+p.units+'/h'}</span><div class="num" id="lv-cur"></div><span class="pill" id="lv-state"></span></div></div>
-    <div class="stats"><div><div class="num" id="lv-dist"></div><span class="label">${p.units==='mi'?'Miles':'Km'}</span></div><div><div class="num" id="lv-time"></div><span class="label">Elapsed</span></div><div><div class="num" id="lv-avg"></div><span class="label">${tr?'Cadence':'Average'}</span></div></div>
-    <p class="muted small" id="lv-gps"></p>${nx&&!fin?`<p class="muted"><strong>Next:</strong> ${esc(nx.name)} · ${nx.m?nx.m/1000+' km':fmtStep(nx.sec/60)}${nx.target?' · '+esc(nx.target):''}</p>`:''}
+    <div class="lvbig"><div><span class="label">${fin?'Total time':s.m?'Distance left':'Time left'}</span><div class="num" id="lv-rem"></div></div><div><span class="label">${tr?'Power, watts':hrMain?'Heart rate':isRun?'Pace /'+p.units:'Speed '+p.units+'/h'}</span><div class="num" id="lv-cur"></div><span class="pill" id="lv-state"></span></div></div>
+    <div class="stats"${hrOn?' style="grid-template-columns:repeat(2,1fr)"':''}><div><div class="num" id="lv-dist"></div><span class="label">${p.units==='mi'?'Miles':'Km'}</span></div><div><div class="num" id="lv-time"></div><span class="label">Elapsed</span></div><div><div class="num" id="lv-avg"></div><span class="label">${tr?'Cadence':'Average'}</span></div>${hrOn?`<div><div class="num" id="lv-hr"></div><span class="label">${hrMain?(isRun?'Pace':'Speed'):'Heart rate'}</span></div>`:''}</div>
+    <p class="muted small" id="lv-gps"></p>${hrOn?'<p class="muted small" id="lv-hrs" style="margin-top:-6px"></p>':''}${nx&&!fin?`<p class="muted"><strong>Next:</strong> ${esc(nx.name)} · ${nx.m?nx.m/1000+' km':fmtStep(nx.sec/60)}${nx.target?' · '+esc(nx.target):''}</p>`:''}
     <div style="flex:1"></div>
     ${tr&&!fin?`<div class="row"><button class="chip" data-act="liveBias" data-n="-0.05">Easier 5%</button><span class="grow muted small" id="lv-bias" style="text-align:center"></span><button class="chip" data-act="liveBias" data-n="0.05">Harder 5%</button></div>`:''}
     ${L.confirm?`<div class="row"><button class="btn grow" data-act="liveFinishYes">Finish and save</button><button class="btn ghost grow" data-act="liveFinishNo">Keep going</button></div>`
@@ -864,9 +897,12 @@ function renderLive(){const el=$('#live');if(!ui.live){el.hidden=true;liveKey=''
   const set=(id,t)=>{const e=$('#'+id);if(e&&e.textContent!==t)e.textContent=t};
   const fmtV=x=>x>0.4?(isRun?fmtT(um/x):(x*3.6/KM(p)).toFixed(1)):'–';
   set('lv-rem',fin?fmtT(st.elapsed||0):s.m?fmtDist(Math.max(0,s.m-(st.stepDist||0))/1000,p):fmtT(Math.max(0,s.sec-(st.stepElapsed||0))));
-  set('lv-cur',tr?(st.power>=0?String(st.power):'–'):fmtV(v));set('lv-bias',st.bias&&Math.abs(st.bias-1)>.01?'Intensity '+Math.round(st.bias*100)+'%':'');
-  const stEl=$('#lv-state');if(stEl){let t='',c='var(--chip)';if(tr&&!fin&&st.tw>0)t='Target '+st.tw+' W';else if(!fin&&v>0.4&&(s.lo||s.hi)){if(s.hi&&v>s.hi*1.03){t='Too fast';c='var(--warn)'}else if(s.lo&&v<s.lo*.97){t='Too slow';c='var(--warn)'}else{t='On target';c='var(--ok)'}}
-    stEl.textContent=t;stEl.hidden=!t;stEl.style.background=c;stEl.style.color=t==='On target'||t.startsWith('Too')?'var(--bg)':''}
+  const bpm=st.hr>0?String(st.hr):'–';
+  set('lv-cur',tr?(st.power>=0?String(st.power):'–'):hrMain?bpm:fmtV(v));if(hrOn){set('lv-hr',hrMain?fmtV(v):bpm);set('lv-hrs',hrMsg(st))}set('lv-bias',st.bias&&Math.abs(st.bias-1)>.01?'Intensity '+Math.round(st.bias*100)+'%':'');
+  const stEl=$('#lv-state');if(stEl){let t='',c='var(--chip)',strong=false;if(tr&&!fin&&st.tw>0)t='Target '+st.tw+' W';
+    else if(hrMain){if(st.hr>0){strong=true;if(st.hr>s.hrHi+2){t='HR high';c='var(--warn)'}else if(s.hrLo&&st.hr<s.hrLo-3){t='HR low';c='var(--warn)'}else{t='In zone';c='var(--ok)'}}else t=s.hrLo?s.hrLo+'–'+s.hrHi:'under '+s.hrHi}
+    else if(!fin&&v>0.4&&(s.lo||s.hi)){strong=true;if(s.hi&&v>s.hi*1.03){t='Too fast';c='var(--warn)'}else if(s.lo&&v<s.lo*.97){t='Too slow';c='var(--warn)'}else{t='On target';c='var(--ok)'}}
+    stEl.textContent=t;stEl.hidden=!t;stEl.style.background=c;stEl.style.color=strong?'var(--bg)':''}
   set('lv-dist',((st.dist||0)/um).toFixed(2));set('lv-time',fmtT(st.elapsed||0));set('lv-avg',tr?(st.cad>=0?String(st.cad):'–'):st.dist>30&&st.elapsed>0?fmtV(st.dist/st.elapsed):'–');
   set('lv-gps',L.trainer?trainerMsg(st):L.indoor?'Indoor mode: timed steps and voice cues, no GPS distance or pace.':!L.st?'Starting GPS…':st.fix?'GPS locked · accurate to '+Math.round(st.acc)+' m':'Waiting for GPS signal. Stand in the open for a moment.')}
 function coachContext(){const p=S.profile,pl=S.plan,n=pl.weeks.length,cw=clamp(curWeek(),0,n-1),wk=pl.weeks[cw],r=racePred(p);
@@ -894,7 +930,7 @@ function viewCoach(){let h=`<div class="row"><h2 class="grow">Coach</h2>${chat.l
   return h+`<div class="stack"><textarea id="chat-in" rows="3" placeholder="Ask your coach"></textarea><button class="btn block" data-act="chatSend">Send</button></div>`}
 window.handleBack=()=>{if(ui.live)return true;if(ui.sheet){ui.sheet=null;ui.logging=null;render();return true}if(ui.draft&&S.profile){ui.draft=null;render();return true}if(ui.tab!=='today'){ui.tab='today';render();return true}return false};
 if(S.profile)derive(S.profile);
-if(NATIVE){const sv=lsGet('tripace.live',null);try{const st=JSON.parse(Android.poll());if(st.run&&sv&&sv.id===st.id){ui.live={id:sv.id,steps:sv.steps,st,confirm:false,indoor:!!sv.indoor,trainer:!!sv.trainer};startPoll()}}catch(e){}}
+if(NATIVE){const sv=lsGet('tripace.live',null);try{const st=JSON.parse(Android.poll());if(st.run&&sv&&sv.id===st.id){ui.live={id:sv.id,steps:sv.steps,st,confirm:false,indoor:!!sv.indoor,trainer:!!sv.trainer,hrm:!!sv.hrm};startPoll()}}catch(e){}}
 render();initSync();
 try{if(window.Android&&Android.ready)Android.ready()}catch(e){} /* tells the app this version starts cleanly; one that never does is rolled back */
 </script>
