@@ -39,7 +39,7 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .chips{display:flex;flex-wrap:wrap;gap:8px}
 .chip{background:var(--chip);border-radius:999px;padding:8px 14px;font-weight:500;min-height:38px}
 .chip[aria-pressed="true"]{background:var(--ink);color:var(--bg)}
-input[type=text],input[type=date],input[type=number],select,textarea{font:inherit;color:var(--ink);background:var(--bg);border:1.5px solid var(--line);border-radius:10px;padding:10px 12px;width:100%;min-height:44px}
+input[type=text],input[type=password],input[type=date],input[type=number],select,textarea{font:inherit;color:var(--ink);background:var(--bg);border:1.5px solid var(--line);border-radius:10px;padding:10px 12px;width:100%;min-height:44px}
 .field{display:flex;flex-direction:column;gap:4px;flex:1;min-width:130px}
 .field>span{font-size:.875rem;color:var(--muted)}
 .err{color:var(--run);font-weight:500}
@@ -137,6 +137,16 @@ td.r,th.r{text-align:right;white-space:nowrap}
 .rmap>.chip{position:absolute;top:10px;right:10px;z-index:1000;box-shadow:0 1px 4px rgba(0,0,0,.25);background:var(--surface)}
 #mapfull{position:fixed;inset:0;z-index:25;background:var(--chip)}#mapfull[hidden]{display:none}
 #mapfull .rmap>.chip{top:calc(12px + env(safe-area-inset-top,0px));right:max(12px,env(safe-area-inset-right,0px))}
+.rkey .ramp{display:inline-flex;margin:0 4px;vertical-align:-1px}.rkey .ramp i{width:12px;height:8px;border-radius:0;margin:0}
+/* workout analysis */
+.stats.trk{grid-template-columns:repeat(auto-fit,minmax(84px,1fr))}.stats.trk .num{font-size:1.4rem}
+.chartbox{position:relative;height:120px;flex-shrink:0;border-radius:10px;background:var(--bg);overflow:hidden}.chartbox svg{width:100%;height:100%;display:block}
+.chartbox .ax{position:absolute;left:8px;font-size:.72rem;color:var(--muted);font-variant-numeric:tabular-nums;background:var(--bg);padding:0 3px;border-radius:4px}.chartbox .t{top:4px}.chartbox .b{bottom:4px}
+table.spl td,table.spl th{padding:5px 4px}table.spl td.bar{width:38%}table.spl .bar i{display:block;height:8px;border-radius:4px;background:var(--c);opacity:.75}
+.belist{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px}.belist>div{display:flex;gap:8px;align-items:center;background:var(--bg);border-radius:10px;padding:8px 10px}
+.belist>div>span:first-child{flex:1;color:var(--muted);font-size:.9rem}.belist .num{font-size:1.1rem}.belist .pb{outline:2px solid var(--ok)}
+.pbrow{display:grid;grid-template-columns:1fr auto;gap:0 12px;align-items:baseline;width:100%;text-align:left;font:inherit;color:inherit;background:var(--bg);border:0;border-radius:10px;padding:8px 12px}
+.pbrow .num{font-size:1.2rem;text-align:right}.pbrow .muted{grid-column:1/-1}button.pbrow{cursor:pointer}
 .rkey{display:flex;gap:16px;margin-top:-6px}.rkey i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:-1px}
 /* the parts of Leaflet's stylesheet this map uses */
 .leaflet-pane,.leaflet-tile,.leaflet-marker-icon,.leaflet-tile-container,.leaflet-pane>svg,.leaflet-pane>canvas,.leaflet-zoom-box,.leaflet-layer{position:absolute;left:0;top:0}
@@ -242,13 +252,14 @@ const LEVELS=['beginner','intermediate','advanced'];
 const LV=p=>Math.max(0,LEVELS.indexOf(p.level));
 /* experience in one sport; falls back to the overall level */
 const SL=(p,sp)=>{const i=LEVELS.indexOf(p.lv&&p.lv[sp]);return i<0?LV(p):i};
-const PHASE={base:'Base',build:'Build',peak:'Peak',taper:'Taper',race:'Race week'};
+const PHASE={base:'Base',build:'Build',peak:'Peak',taper:'Taper',race:'Race week',recover:'Recovery'};
 const PHASE_NOTE={
   base:'Build aerobic durability and technique. Most of the work is easy, and that is the point.',
   build:'Race-specific intensity arrives. Protect the key sessions and keep easy days easy.',
   peak:'Your biggest, most race-like weeks. Practise fueling and pacing exactly as you will on race day.',
   taper:'Volume drops, sharpness stays. The goal is to arrive fresh.',
-  race:'Short openers only. Sleep, hydrate and check your kit.'};
+  race:'Short openers only. Sleep, hydrate and check your kit.',
+  recover:'After the race: short, easy sessions only while your body repairs. The fitness is banked. Set your next goal under Settings when you are ready.'};
 function vdot(m,sec){const t=sec/60,v=m/t;return(-4.6+0.182258*v+0.000104*v*v)/(0.8+0.1894393*Math.exp(-0.012778*t)+0.2989558*Math.exp(-0.1932605*t))}
 function vAt(vd,f){return(-0.182258+Math.sqrt(0.182258**2+4*0.000104*(f*vd+4.6)))/(2*0.000104)}
 function predict(vd,m){let lo=m/600*60,hi=m/40*60;for(let i=0;i<50;i++){const mid=(lo+hi)/2;if(vdot(m,mid)>vd)lo=mid;else hi=mid}return(lo+hi)/2}
@@ -456,8 +467,26 @@ function buildPlan(p){
     ss.sort((a,b)=>a.d-b.d||(a.sp==='strength')-(b.sp==='strength'));
     weeks.push({ph,rec,w:ss.map((s,j)=>({id:i+'-'+j,d:s.d,sp:s.sp,k:s.k,min:s.min,x:s.x||0,v:i+(s.vo||0)}))});
   }
-  return{start,weeks,rideDay,runDay};
+  return addRecovery({start,weeks,rideDay,runDay},p);
 }
+/* After race day: one to three weeks of short, easy sessions (longer races need longer), building back gradually.
+   After a half or full distance, running waits until the fourth day after the race; swimming and spinning come first. */
+function addRecovery(pl,p){if(!pl||!pl.weeks.length||pl.weeks.some(w=>w.ph==='recover')||pl.weeks[pl.weeks.length-1].ph!=='race')return pl;
+  const tier=TIER(p),nw={sprint:1,olympic:1,half:2,full:3}[tier],big=tier==='half'||tier==='full',sports=SPORTS(p),has=s=>sports.includes(s);
+  const mask=[0,1,2,3,4,5,6].map(d=>p.days[d]>0),N=mask.filter(Boolean).length||3,rd=dow(p.raceDate);
+  for(let r=0;r<nw;r++){const i=pl.weeks.length,k=Math.max(1,Math.min(N,[3,4,5][r]));
+    const days=pickDays(k,[],mask.some(Boolean)?mask:null).map((v,d)=>v?d:-1).filter(d=>d>=0);
+    const pattern=sports.length===1?[sports[0]]:(r===0&&big?['swim','bike','swim','bike','run']:['swim','bike','run','swim','bike','run']).filter(has);
+    const runOK=d=>r>0||(7-rd)+d>=(big?4:2); // days since the race
+    const ss=[];let j=0;
+    days.forEach(d=>{let sp=pattern[j%pattern.length];j++;
+      if(sp==='run'&&!runOK(d)){const alt=pattern.find(x=>x!=='run');if(!alt)return;sp=alt}
+      const base=[30,40,50][r]*(tier==='sprint'?.85:1),m=r5(base*{swim:.9,bike:1.3,run:.8}[sp]);
+      ss.push({sp,k:sp==='swim'?'tech':'easy',min:m,d})});
+    if(p.mobility)[1,4].forEach(d=>ss.push({sp:'strength',k:'mob',min:15,d}));
+    ss.sort((a,b)=>a.d-b.d||(a.sp==='strength')-(b.sp==='strength'));
+    pl.weeks.push({ph:'recover',rec:false,w:ss.map((s,x)=>({id:i+'-'+x,d:s.d,sp:s.sp,k:s.k,min:s.min,x:0,v:i*2+1}))})}
+  return pl}
 
 /* ---------- workout descriptions ---------- */
 const st=(n,min,z,note)=>({n,min,z,note});
@@ -492,6 +521,9 @@ const BODY={
 const heatP=w=>w.heat?Object.assign({},S.profile,{vdot:S.profile.vdot*(1-w.heat)}):S.profile;
 function describe(w,wk,p){
   if(w.q){const r=quickPlan(w.q,p);return{title:r.title||'Workout',why:r.why||'',steps:r.steps||[]}}
+  if(wk.ph==='recover'&&w.sp!=='strength'){const r=describe(w,Object.assign({},wk,{ph:'base'}),p); // the easy base-phase session, no strides
+    return{title:{swim:'Recovery swim',bike:'Recovery spin',run:'Recovery run'}[w.sp]||r.title,steps:r.steps,
+      why:'Race recovery. Muscles, tendons and your immune system are still repairing. Keep it short and truly easy, and skip it if you feel run down or sore.'}}
   const ph=wk.ph==='race'?'taper':wk.ph,v=w.v||0,R=RACES[p.race],big=R.tier==='half'||R.tier==='full',runOnly=R.g==='run',m=w.min;let title='',why='',steps=[];
   if(w.sp==='run'){
     if(w.k==='easy'){title='Easy run';why='Aerobic mileage that lets you absorb the harder days. Keep it conversational the whole way.';
@@ -624,13 +656,15 @@ function estDist(w,d,p){
 /* ---------- state ---------- */
 const KEY='tripace.v1';let S={v:1,profile:null,plan:null,log:{},updatedAt:0};
 try{const raw=localStorage.getItem(KEY);if(raw){const o=JSON.parse(raw);if(o&&o.v===1)S=o}}catch(e){}
+// plans built before post-race recovery existed get it added
+try{if(S.plan&&S.profile)addRecovery(S.plan,S.profile)}catch(e){}
 const ui={tab:'today',day:null,draft:null,wiz:0,wizMode:null,sheet:null,logging:null,openWeek:null,confirm:false,err:''};
 let syncState='local',dbDoc=null,saving=false,dirty=false,pushTimer=0;
 function save(){S.updatedAt=Date.now();try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}if(dbDoc){dirty=true;clearTimeout(pushTimer);pushTimer=setTimeout(flush,1200)}}
 async function flush(){if(saving||!dirty||!dbDoc)return;saving=true;dirty=false;try{await dbDoc.set({json:JSON.stringify(S),updatedAt:S.updatedAt});syncState='synced'}catch(e){syncState='local'}saving=false;if(dirty)flush()}
 async function initSync(){try{if(!window.claude||!window.claude.use)return;const[db,user]=await Promise.all([window.claude.use('db'),window.claude.use('user')]);if(!db||!user)return;const id=await user.id();if(!id)return;
   const ref=db.doc('data/users/'+id+'/state');const snap=await ref.get();dbDoc=ref;syncState='synced';
-  if(snap.exists){const r=snap.data();if(r.json&&(r.updatedAt||0)>(S.updatedAt||0)){const o=JSON.parse(r.json);if(o&&o.v===1){S=o;try{localStorage.setItem(KEY,r.json)}catch(e){}if(S.profile){ui.draft=null}}}else if((S.updatedAt||0)>(r.updatedAt||0)){dirty=true;flush()}}
+  if(snap.exists){const r=snap.data();if(r.json&&(r.updatedAt||0)>(S.updatedAt||0)){const o=JSON.parse(r.json);if(o&&o.v===1){S=o;try{localStorage.setItem(KEY,r.json)}catch(e){}try{if(S.plan&&S.profile)addRecovery(S.plan,S.profile)}catch(e){}if(S.profile){ui.draft=null}}}else if((S.updatedAt||0)>(r.updatedAt||0)){dirty=true;flush()}}
   else if(S.profile){dirty=true;flush()}
   render()}catch(e){syncState='local'}}
 function toast(t){const el=$('#toast');el.textContent=t;el.hidden=false;clearTimeout(toast.t);toast.t=setTimeout(()=>el.hidden=true,2400)}
@@ -731,10 +765,26 @@ function viewProgress(){const pl=S.plan,cw=curWeek(),n=pl.weeks.length,t=today()
   for(let i=upto;i>=Math.max(0,upto-7);i--){const wk=pl.weeks[i],pm=sum(sportMins(wk)),dm=sum(sportMins(wk,true));h+=`<div class="mrow" style="--c:var(--accent)"><span class="label">Wk ${i+1}</span><div class="meter"><i style="width:${pm?Math.min(100,dm/pm*100):0}%"></i></div><span class="small num">${fmtDur(dm)} / ${fmtDur(pm)}</span></div>`}
   if(skip)h+=`<p class="muted small">${skip} skipped. One missed session never matters; do not try to make it up. If you miss a week or more, rebuild the plan from Settings.</p>`;
   h+=`</div>`;
+  const pb=S.pb||{},pbRows=sp=>(sp==='bike'?BIKE_BE:RUN_BE).filter(a=>pb[sp]&&pb[sp][a[0]]).map(a=>{const b=pb[sp][a[0]],l=S.log[b.id],open=l&&l.trk&&l.trk.be&&l.trk.be[a[0]]===b.sec;
+    return`<${open?`button data-act="open" data-id="${b.id}"`:'div'} class="pbrow"><span>${a[1]}</span><span class="num">${fmtT(b.sec)}</span><span class="muted small">${paceTxt(a[0],b.sec,sp,S.profile)}${b.at?' · '+fmtDate(b.at).slice(4):''}</span></${open?'button':'div'}>`}).join('');
+  const pr=pbRows('run'),pbk=pbRows('bike');
+  h+=`<div class="panel"><h2>Personal bests</h2>${pr||pbk?(pr?`<span class="label" style="color:var(--run)">Run</span>${pr}`:'')+(pbk?`<span class="label" style="color:var(--bike)">Bike</span>${pbk}`:''):'<p class="muted">Your fastest mile, 5K, 10K and more appear here after outdoor runs and rides tracked with GPS.</p>'}</div>`;
   const hist=Object.entries(S.log).filter(e=>e[1].s==='done').sort((a,b)=>(b[1].at||'').localeCompare(a[1].at||'')).slice(0,20);
   if(hist.length)h+=`<div class="panel"><h2>History</h2>${hist.map(([id,l])=>{const f=findW(id);if(!f.w)return'';return`<button class="mini c-${f.w.sp}" data-act="open" data-id="${id}"><i></i><span class="grow">${esc(describe(f.w,f.wk,S.profile).title)}<br><span class="muted small">${l.at?fmtDate(l.at):''}${l.dist?' · '+esc(l.dist):''}${l.rpe?' · effort '+l.rpe+'/10':''}</span></span><span class="muted small num">${l.min?fmtDur(l.min):''}</span></button>`}).join('')}</div>`;
   return h}
 /* Over-the-air updates (Android app only): the native side fetches new versions of this page from the update site. */
+/* GPX export and Strava (Android app 6+): the track and the Strava sign-in stay on the phone */
+function canExport(id){try{return NATIVE&&!!Android.hasTrack&&Android.hasTrack(id)}catch(e){return false}}
+function stravaInfo(){try{return NATIVE&&Android.stravaStatus?JSON.parse(Android.stravaStatus()):{}}catch(e){return{}}}
+function stravaSend(id){const{w,wk}=findW(id),lg=S.log[id];if(!w||!lg)return;const p=S.profile,d=describe(w,wk,p);
+  const desc=[lg.note,d.why?'Planned: '+d.title+'. '+d.why:'',lg.rpe?'Effort '+lg.rpe+'/10.':'','Planned and tracked with Tripace.'].filter(Boolean).join('\n');
+  ui.stravaBusy=id;try{Android.stravaUpload(id,d.title,w.sp==='bike'||w.sp==='brick'?'bike':'run',desc)}catch(e){ui.stravaBusy=null;toast('Could not reach Strava')}render()}
+window.onStrava=(kind,val)=>{
+  if(kind==='connected'){ui.stravaMsg='';toast('Strava connected')}
+  else if(kind==='error'){ui.stravaMsg=val;toast('Strava: '+val)}
+  else if(kind.startsWith('uploaded:')){const id=kind.slice(9);if(S.log[id]){S.log[id].strava=val;save()}ui.stravaBusy=null;toast('Sent to Strava')}
+  else if(kind.startsWith('failed:')){ui.stravaBusy=null;ui.stravaMsg=val;toast('Strava: '+val)}
+  if(!ui.draft)render()};
 function appVer(){try{return window.Android&&Android.version?JSON.parse(Android.version()):null}catch(e){return null}}
 function fmtVer(v){v=String(v);if(v.length!==12)return v;const d=new Date(Date.UTC(+v.slice(0,4),+v.slice(4,6)-1,+v.slice(6,8),+v.slice(8,10),+v.slice(10)));
   return d.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'})+', '+d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'})}
@@ -753,6 +803,20 @@ function viewSettings(){const p=S.profile,pl=S.plan;
     <span class="label">For how long</span><div class="chips">${[3,5,7,10,14].map(n=>chip(n+' days','adaptSet','data-k="days" data-v="'+n+'"',A.days===n)).join('')}</div>
     <span class="label">What to do</span><div class="chips">${chip('Pause training','adaptSet','data-k="mode" data-v="pause"',A.mode==='pause')}${chip('Easy sessions only','adaptSet','data-k="mode" data-v="easy"',A.mode==='easy')}${chip('Short easy only','adaptSet','data-k="mode" data-v="short"',A.mode==='short')}</div>
     ${A.ask?`<p class="err">This changes your plan for the next ${A.days} days and cannot be undone, except by rebuilding the plan.</p><div class="row"><button class="btn grow" data-act="adaptApply">Adjust my plan</button><button class="btn ghost grow" data-act="adaptSet" data-k="ask" data-v="">Cancel</button></div>`:`<button class="btn line block" data-act="adaptSet" data-k="ask" data-v="1">Adjust my plan</button>`}</div>`;
+  if(NATIVE&&window.Android&&Android.stravaStatus){const sv=stravaInfo(),dom=sv.domain||'your update site';
+    h+=`<div class="panel"><h2>Strava</h2>`;
+    if(sv.connected)h+=`<p>Connected${sv.athlete?' as <strong>'+esc(sv.athlete)+'</strong>':''}.</p><span class="label">After you save an outdoor workout</span><div class="chips">${chip('Send it to Strava automatically','stravaAuto','data-v="1"',!!cfg.stravaAuto)}${chip('Only when I tap Send','stravaAuto','data-v="0"',!cfg.stravaAuto)}</div><button class="btn ghost block" data-act="stravaDisconnect">Disconnect Strava</button>`;
+    else if(sv.setup&&!ui.stravaEdit)h+=`<p class="muted small">Your Strava app (Client ID ${esc(sv.cid)}) is saved. Connecting opens Strava to sign in and allow uploads, then brings you back here.</p><button class="btn block" data-act="stravaConnect">Connect Strava</button><button class="btn line block" data-act="stravaEdit">Change Client ID or Secret</button>`;
+    else h+=`<p class="muted small">Tripace uploads through your own free Strava API app, so nothing goes through anyone else's server. One-time setup, about five minutes:</p>
+      <ol class="small" style="margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px"><li>Sign in at <a href="https://www.strava.com/settings/api">strava.com/settings/api</a> and create an application.</li>
+      <li>Application name: <strong>Tripace (personal)</strong>. Category: <strong>Training</strong>. Website: <strong>https://${esc(dom)}</strong>.</li>
+      <li>Authorization Callback Domain: <strong>${esc(dom)}</strong> exactly.</li><li>Upload any image as the icon, then copy the <strong>Client ID</strong> and <strong>Client Secret</strong> below.</li></ol>
+      <label class="field"><span>Client ID</span><input type="text" inputmode="numeric" id="sv-id" value="${esc(sv.cid||'')}" autocomplete="off"></label>
+      <label class="field"><span>Client Secret${sv.setup?' (leave empty to keep the saved one)':''}</span><input type="password" id="sv-sec" autocomplete="off"></label>
+      <div class="row">${sv.setup?'<button class="btn ghost" data-act="stravaEdit">Cancel</button>':''}<button class="btn grow" data-act="stravaSave">Save</button></div>
+      <p class="muted small">The secret is kept only in this phone's app storage. It is not synced or shared.</p>`;
+    if(ui.stravaMsg)h+=`<p class="err">${esc(ui.stravaMsg)}</p>`;
+    h+=`</div>`}
   const V=appVer();if(V)h+=`<div class="panel"><h2>App updates</h2><p class="small">Version ${esc(fmtVer(V.v))}${V.src==='update'?' (updated over the air)':''}</p><p class="muted small">The app checks for updates each time it opens. New screens and plan changes download by themselves; you just restart the app to use them.</p>
     ${ui.upd?`<p class="small">${esc(ui.upd)}</p>`:''}${ui.updApk?`<button class="btn block" data-act="updApk">Download the new app</button>`:''}${ui.updReady?`<button class="btn block" data-act="updReload">Restart to update</button>`:`<button class="btn line block" data-act="updCheck">Check for updates</button>`}</div>`;
   const rm=p.runMode||'pace',noHr='Add your threshold or max heart rate under Paces → Update my fitness to see bpm targets.';
@@ -831,15 +895,24 @@ function viewSheet(){const{wk,i,w}=findW(ui.sheet),p=heatP(w),d=describe(w,wk,p)
   const route=(ui.logging&&ui.logging.route)||(lg&&lg.route)||null;curRoute=route;
   const label=w.sp==='brick'?'Brick':w.sp==='race'?(w.k==='prac'?'Practice race':'Race day'):w.sp[0].toUpperCase()+w.sp.slice(1);
   let h=`<div class="card c-${w.sp}"><div class="row"><div class="grow stack" style="gap:2px"><span class="label" style="color:var(--c)">${label} · ${fmtDate(date)}${w.date?'':' · Week '+(i+1)}</span><h2>${esc(d.title)}</h2></div><button class="chip" data-act="close" aria-label="Close">✕</button></div>
-    <div class="row"><span class="num" style="font-size:1.6rem">${w.k==='prac'?'Rehearsal':w.sp==='race'?fmtT(racePred(p).total):fmtDur(w.min+(w.x||0))}</span>${dist?`<span class="muted">${dist}</span>`:''}${lg?`<span class="pill">${lg.s==='done'?'Done':'Skipped'}</span>`:''}</div>${route?routeBlock(route):''}<p class="muted">${esc(d.why)}</p><div class="steps">${d.steps.map(s=>stepHtml(s,p,w.sp)).join('')}</div>`;
-  if(ui.logging){const L=ui.logging,test=w.k==='test';
+    <div class="row"><span class="num" style="font-size:1.6rem">${w.k==='prac'?'Rehearsal':w.sp==='race'?fmtT(racePred(p).total):fmtDur(w.min+(w.x||0))}</span>${dist?`<span class="muted">${dist}</span>`:''}${lg?`<span class="pill">${lg.s==='done'?'Done':'Skipped'}</span>`:''}</div>${route?routeBlock(route):''}`;
+  const trk=(ui.logging&&ui.logging.trk)||(lg&&lg.trk)||null,plan=`<p class="muted">${esc(d.why)}</p><div class="steps">${d.steps.map(s=>stepHtml(s,p,w.sp)).join('')}</div>`;
+  if(trk)h+=trkHtml(trk,S.profile,!!(ui.logging&&ui.logging.fresh));
+  // just finished: the log form comes straight after the results; the planned steps follow below it
+  if(!ui.logging||!ui.logging.trk)h+=plan;
+  if(ui.logging){const L=ui.logging,test=w.k==='test',nb=L.fresh&&L.trk?newBests(L.trk).filter(b=>b.was):[];
+    if(nb.length)h+=`<div class="panel" style="border:2px solid var(--ok);gap:6px"><h3>New personal best${nb.length>1?'s':''}</h3>${nb.map(b=>`<p class="small">${beName(L.trk.sp,b.L)} <strong class="num">${fmtT(b.sec)}</strong> <span class="muted">was ${fmtT(b.was)}</span></p>`).join('')}
+      ${L.pbOffer?`<button class="chip" data-act="usePB" aria-pressed="${!!L.usePB}">Update my run paces from this ${beName('run',L.pbOffer.L)} (${fmtT(L.pbOffer.sec)})</button>`:''}</div>`;
     h+=`<div class="stack" style="border-top:1px solid var(--line);padding-top:14px"><h3>Log this workout</h3>${test?`<label class="field"><span>${w.sp==='swim'?'400 time (m:ss)':w.sp==='run'?'5K time (m:ss)':'20-minute average power (watts)'}</span><input type="text" inputmode="numeric" ${w.sp!=='bike'?'data-time="1"':''} id="l-res" data-l="result" value="${esc(L.result)}" placeholder="${w.sp==='bike'?'e.g. 232':'e.g. '+(w.sp==='swim'?'7:10':'24:50')}"></label>`:''}
       <div class="row"><label class="field"><span>Minutes</span><input type="text" inputmode="numeric" id="l-min" data-l="min" value="${esc(L.min)}"></label><label class="field"><span>Distance (optional)</span><input type="text" id="l-dist" data-l="dist" value="${esc(L.dist)}" placeholder="${w.sp==='swim'?'2000 '+p.pool:'6.2 '+p.units}"></label></div>
       <span class="label">How hard did it feel? (1 easy – 10 max)</span><div class="chips">${[1,2,3,4,5,6,7,8,9,10].map(n=>chip(n,'rpe','data-v="'+n+'"',L.rpe===n)).join('')}</div>
       <label class="field"><span>Notes</span><textarea id="l-note" data-l="note" rows="2">${esc(L.note)}</textarea></label>
-      <div class="row"><button class="btn ghost" data-act="logCancel">Cancel</button><button class="btn grow" data-act="logSave">Save</button></div></div>`}
+      <div class="row"><button class="btn ghost" data-act="logCancel">Cancel</button><button class="btn grow" data-act="logSave">Save</button></div></div>`+(L.trk?plan:'')}
   else{
     if(lg&&lg.s==='done')h+=`<p class="small muted">Logged ${lg.min?lg.min+' min':''}${lg.dist?' · '+esc(lg.dist):''}${lg.rpe?' · effort '+lg.rpe+'/10':''}${lg.note?' · '+esc(lg.note):''}</p>`;
+    if(lg&&lg.s==='done'&&lg.trk&&canExport(w.id)){const sv=stravaInfo(),busy=ui.stravaBusy===w.id;
+      h+=`<div class="stack"><div class="row"><button class="btn line grow" data-act="gpx">Export GPX</button>${lg.strava?`<a class="btn ghost grow" href="https://www.strava.com/activities/${encodeURIComponent(lg.strava)}" style="text-align:center;text-decoration:none">View on Strava</a>`
+        :sv.connected?`<button class="btn grow" data-act="stravaSend"${busy?' disabled':''}>${busy?'Sending…':'Send to Strava'}</button>`:''}</div>${!sv.connected&&!lg.strava?`<span class="muted small">To send workouts to Strava automatically, connect it under Settings.</span>`:''}</div>`}
     const hasRun=(w.sp==='run'||w.sp==='brick')&&!(lg&&lg.s==='done');
     if(hasRun&&p.runMode!=='rpe')h+=`<div class="stack"><span class="label">Conditions today</span><div class="chips">${chip('Normal','heat','data-v="0"',!w.heat)}${chip(p.units==='mi'?'Warm, 75–84°F':'Warm, 24–29°C','heat','data-v="0.03"',w.heat===0.03)}${chip(p.units==='mi'?'Hot, 85°F+':'Hot, 30°C+','heat','data-v="0.06"',w.heat===0.06)}</div>${w.heat?'<span class="muted small">Run pace targets above are slowed for the heat. Drink early and often.</span>':''}</div>`;
     if(NATIVE&&['run','bike','brick'].includes(w.sp)&&!(lg&&lg.s==='done'))h+=w.sp==='run'?`<button class="btn block" data-act="liveStart">Start with GPS</button><button class="btn line block" data-act="liveStartIndoor">Start indoors, timer only</button>`
@@ -875,15 +948,28 @@ function act(a,el){const D=ui.draft,v=el.dataset.v;
     case'toggleWeek':{const i=+el.dataset.i,open=ui.openWeek??clamp(curWeek(),0,S.plan.weeks.length-1);ui.openWeek=open===i?-1:i;break}
     case'open':ui.sheet=el.dataset.id;ui.logging=null;break;
     case'close':ui.sheet=null;ui.logging=null;break;
-    case'logStart':{const{w}=findW(ui.sheet),lg=S.log[w.id]||{};ui.logging={min:lg.min||String(w.min+(w.x||0)),dist:lg.dist||'',rpe:lg.rpe||0,note:lg.note||'',result:lg.result||'',route:lg.route};break}
+    case'logStart':{const{w}=findW(ui.sheet),lg=S.log[w.id]||{};ui.logging={min:lg.min||String(w.min+(w.x||0)),dist:lg.dist||'',rpe:lg.rpe||0,note:lg.note||'',result:lg.result||'',route:lg.route,trk:lg.trk,strava:lg.strava};break}
     case'logCancel':ui.logging=null;break;
     case'rpe':ui.logging.rpe=+v;break;
     case'logSave':{const{w}=findW(ui.sheet),L=ui.logging;S.log[w.id]={s:'done',min:parseFloat(L.min)||w.min,dist:L.dist,rpe:L.rpe,note:L.note,result:L.result,at:today()};if(L.pr)S.log[w.id].pr=L.pr;if(L.route)S.log[w.id].route=L.route;
+      if(L.strava)S.log[w.id].strava=L.strava; // editing the log keeps the Strava link
       let msg='Workout logged';
+      if(L.trk){S.log[w.id].trk=L.trk;if(L.fresh){const nb=newBests(L.trk);recordBests(w.id,L.trk,today());if(nb.some(b=>b.was))msg='Logged · new personal best'}}
+      if(L.usePB&&L.pbOffer){const f=S.profile.fit;f.runD=String(L.pbOffer.L);f.runT=fmtT(L.pbOffer.sec);S.profile.vAdj=0;S.profile.vAdjPrev=null;derive(S.profile);msg='Run paces updated from your '+beName('run',L.pbOffer.L)}
+      if(L.fresh&&L.trk&&cfg.stravaAuto&&canExport(w.id)&&stravaInfo().connected)setTimeout(()=>stravaSend(w.id),300);
       if(w.k==='test'&&L.result){const f=S.profile.fit;if(w.sp==='swim'&&parseT(L.result)){f.swimD='400';f.swimT=L.result;S.profile.cssAdj=0;msg='Swim paces updated'}if(w.sp==='run'&&parseT(L.result)){f.runD='5000';f.runT=L.result;S.profile.vAdj=0;S.profile.vAdjPrev=null;msg='Run paces updated'}if(w.sp==='bike'&&parseFloat(L.result)){f.ftp=String(Math.round(parseFloat(L.result)*.95));msg='FTP set to '+f.ftp+' W'}derive(S.profile)}
       ui.logging=null;save();toast(msg);break}
     case'skip':S.log[ui.sheet]={s:'skip',at:today()};save();break;
-    case'unlog':delete S.log[ui.sheet];save();break;
+    case'unlog':delete S.log[ui.sheet];dropBests(ui.sheet);save();break;
+    case'usePB':ui.logging.usePB=!ui.logging.usePB;break;
+    case'gpx':{const{w,wk}=findW(ui.sheet);let r='none';try{r=Android.exportTrack(w.id,describe(w,wk,S.profile).title,w.sp==='bike'||w.sp==='brick'?'bike':'run')}catch(e){}if(r!=='ok')toast('No GPS track saved for this workout');break}
+    case'stravaSend':stravaSend(ui.sheet);break;
+    case'stravaSave':{const id=($('#sv-id')||{}).value||'',sec=($('#sv-sec')||{}).value||'';if(!/^\d+$/.test(id.trim())){toast('The Client ID is a number, e.g. 123456');break}
+      if(!stravaInfo().setup&&!sec.trim()){toast('Paste the Client Secret too');break}try{Android.stravaSetup(id.trim(),sec.trim())}catch(e){}ui.stravaEdit=false;toast('Saved. Now tap Connect Strava');break}
+    case'stravaEdit':ui.stravaEdit=!ui.stravaEdit;break;
+    case'stravaConnect':{let r='';try{r=Android.stravaConnect()}catch(e){}if(r!=='ok')toast('Save your Client ID and Secret first');break}
+    case'stravaDisconnect':try{Android.stravaDisconnect()}catch(e){}toast('Disconnecting Strava');break;
+    case'stravaAuto':cfg.stravaAuto=v==='1';lsSet('tripace.coach',cfg);break;
     case'move':{const{wk,w}=findW(ui.sheet);w.d=+el.dataset.d;wk.w.sort((x,y)=>x.d-y.d);save();toast('Moved to '+DN[w.d]);break}
     case'mode':S.profile.bikeMode=v;save();break;
     case'liveStart':startLive(false);break;
@@ -1026,25 +1112,97 @@ function startPoll(){clearInterval(pollT);pollT=setInterval(()=>{if(!ui.live){cl
   if(!st.run){ui.live=null;lsSet('tripace.live',null);clearInterval(pollT);renderLive();return}ui.live.st=st;renderLive()},1000)}
 /* ---------- route map ---------- */
 // GPS track -> at most n points (Ramer–Douglas–Peucker, in metres), 5 decimals (about 1 m). Null when it never really went anywhere.
-function simplifyRoute(pts,n=300){if(!Array.isArray(pts)||pts.length<2)return null;
+// With speeds (one per point) each kept point also carries a pace band 0 (slowest) to 4 (fastest) for colouring the line.
+function simplifyRoute(pts,n=300,spd){if(!Array.isArray(pts)||pts.length<2)return null;
   const kx=111320*Math.cos(pts[0][0]*Math.PI/180),ky=110540,xy=pts.map(q=>[q[1]*kx,q[0]*ky]),N=pts.length;
   const xs=xy.map(p=>p[0]),ys=xy.map(p=>p[1]);if(Math.hypot(Math.max(...xs)-Math.min(...xs),Math.max(...ys)-Math.min(...ys))<60)return null;
   const rdp=tol=>{const keep=new Uint8Array(N),st=[[0,N-1]];keep[0]=keep[N-1]=1;
     while(st.length){const[a,b]=st.pop(),[ax,ay]=xy[a],dx=xy[b][0]-ax,dy=xy[b][1]-ay,L2=dx*dx+dy*dy;let md=-1,mi=-1;
       for(let i=a+1;i<b;i++){const px=xy[i][0]-ax,py=xy[i][1]-ay,t=L2?clamp((px*dx+py*dy)/L2,0,1):0,ex=px-t*dx,ey=py-t*dy,dd=ex*ex+ey*ey;if(dd>md){md=dd;mi=i}}
       if(md>tol*tol){keep[mi]=1;st.push([a,mi],[mi,b])}}
-    return pts.filter((_,i)=>keep[i])};
+    return pts.map((_,i)=>i).filter(i=>keep[i])};
   let tol=3,out=rdp(tol);while(out.length>n){tol*=1.6;out=rdp(tol)}
-  return out.map(q=>[+(+q[0]).toFixed(5),+(+q[1]).toFixed(5)])}
+  const band=spd&&spd.length===N?(()=>{const s=spd.filter(v=>v>0.3).sort((a,b)=>a-b);if(s.length<10)return null;const q=[.2,.4,.6,.8].map(f=>s[Math.floor(f*(s.length-1))]);return v=>q.filter(x=>v>x).length})():null;
+  return out.map(i=>{const q=pts[i],o=[+(+q[0]).toFixed(5),+(+q[1]).toFixed(5)];if(band)o.push(band(spd[i]));return o})}
+/* ---------- workout analysis from the GPS track ---------- */
+// points from the app: [lat, lon, altitude or null, moving seconds, metres, bpm or -1]
+const RUN_BE=[[400,'400 m'],[1000,'1K'],[1609.344,'1 mile'],[5000,'5K'],[10000,'10K'],[21097.5,'Half marathon'],[42195,'Marathon']];
+const BIKE_BE=[[10000,'10 km'],[20000,'20 km'],[40000,'40 km'],[90000,'90 km'],[180000,'180 km']];
+const PACE_COL=['#3B7DD8','#35A7A0','#E2B33C','#EE7A3B','#D33A4A']; // slower to faster
+// fastest time over each distance: the quickest stretch anywhere in the track, by moving time
+function bestEfforts(T,Dm,list){const N=T.length,out={};
+  list.forEach(([L])=>{if(Dm[N-1]-Dm[0]<L)return;let best=1e9,j=0;
+    for(let i=0;i<N;i++){const goal=Dm[i]+L;if(j<i+1)j=i+1;while(j<N&&Dm[j]<goal)j++;if(j>=N)break;
+      const f=(goal-Dm[j-1])/((Dm[j]-Dm[j-1])||1),t=T[j-1]+(T[j]-T[j-1])*f-T[i];if(t>0&&t<best)best=t}
+    if(best<1e9)out[L]=Math.round(best)});return out}
+function analyzeTrack(pts,sport,p){
+  if(!Array.isArray(pts)||pts.length<5||!Array.isArray(pts[0])||pts[0].length<6)return null; // older app: positions only
+  const N=pts.length,T=pts.map(q=>+q[3]),Dm=pts.map(q=>+q[4]),D=Dm[N-1]-Dm[0],mov=T[N-1]-T[0];
+  if(D<200||mov<60)return null;
+  const run=sport!=='bike';
+  // speed at each point over a short time window either side, so GPS wobble does not make spikes
+  const win=run?15:10,spd=new Array(N);let a=0,b=0;
+  for(let i=0;i<N;i++){while(T[i]-T[a]>win)a++;if(b<i)b=i;while(b+1<N&&T[b+1]-T[i]<=win)b++;spd[i]=T[b]>T[a]?(Dm[b]-Dm[a])/(T[b]-T[a]):0}
+  // elevation: fill gaps, smooth, and count climbing only once it is more than 3 m, as barometric watches do
+  let al=pts.map(q=>q[2]==null?null:+q[2]);const hasE=al.filter(v=>v!=null).length>N*.5,G=new Array(N).fill(0);let el=null,up=null;
+  if(hasE){for(let i=1;i<N;i++)if(al[i]==null)al[i]=al[i-1];for(let i=N-2;i>=0;i--)if(al[i]==null)al[i]=al[i+1];
+    el=al.map((_,i)=>{let s=0,c=0;for(let k=Math.max(0,i-6);k<=Math.min(N-1,i+6);k++){s+=al[k];c++}return s/c});
+    let ref=el[0];up=0;for(let i=1;i<N;i++){if(el[i]>ref+3){up+=el[i]-ref;ref=el[i]}else if(el[i]<ref-3)ref=el[i];G[i]=up}}
+  // value of an array at a distance along the track, interpolated
+  let ptr=0;const at=(arr,x)=>{if(x<=Dm[0])ptr=0;while(ptr+1<N&&Dm[ptr+1]<x)ptr++;if(ptr+1>=N)return arr[N-1];const f=(x-Dm[ptr])/((Dm[ptr+1]-Dm[ptr])||1);return arr[ptr]+(arr[ptr+1]-arr[ptr])*clamp(f,0,1)};
+  // splits: every mile/km on foot, every 5 on the bike
+  const su=(run?1:5)*KM(p)*1000,spl=[];
+  for(let x=Dm[0];x<Dm[N-1]-1;x+=su){const e=Math.min(x+su,Dm[N-1]),len=e-x;if(len<su*.1&&spl.length)break;
+    ptr=0;const t0=at(T,x),t1=at(T,e);ptr=0;const g0=at(G,x),g1=at(G,e);
+    let hs=0,hc=0;for(let i=0;i<N;i++)if(Dm[i]>=x&&Dm[i]<=e&&pts[i][5]>0){hs+=pts[i][5];hc++}
+    spl.push([Math.round(t1-t0),Math.round(len),hasE?Math.round(g1-g0):null,hc?Math.round(hs/hc):0])}
+  // profiles: 100 samples along the distance
+  const pe=hasE?[]:null,pv=[];ptr=0;for(let k=0;k<100;k++){const x=Dm[0]+D*k/99;if(pe)pe.push(Math.round(at(el,x)));pv.push(Math.round(at(spd,x)*100))}
+  const hrs=pts.map(q=>q[5]).filter(v=>v>0);
+  const trk={sp:run?'run':'bike',d:Math.round(D),mov:Math.round(mov),up:up==null?null:Math.round(up),hr:hrs.length?Math.round(hrs.reduce((x,y)=>x+y,0)/hrs.length):0,su:Math.round(su),spl,pe,pv,
+    be:bestEfforts(T,Dm,run?RUN_BE:BIKE_BE)};
+  return{trk,route:simplifyRoute(pts,300,spd)}}
+/* personal bests survive plan rebuilds, so they live apart from the log: S.pb[sport][metres] = {sec, at, id} */
+function newBests(trk){const pb=(S.pb||{})[trk.sp]||{};return Object.entries(trk.be||{}).filter(([L,s])=>!pb[L]||s<pb[L].sec).map(([L,s])=>({L:+L,sec:s,was:pb[L]?pb[L].sec:0}))}
+function recordBests(id,trk,at){S.pb=S.pb||{run:{},bike:{}};const o=S.pb[trk.sp]=S.pb[trk.sp]||{};newBests(trk).forEach(b=>o[b.L]={sec:b.sec,at,id})}
+function dropBests(id){if(!S.pb)return;for(const sp in S.pb)for(const L in S.pb[sp])if(S.pb[sp][L].id===id){delete S.pb[sp][L];
+  Object.entries(S.log).forEach(([i,l])=>{const s=l.trk&&l.trk.sp===sp&&l.trk.be&&l.trk.be[L];if(s&&(!S.pb[sp][L]||s<S.pb[sp][L].sec))S.pb[sp][L]={sec:s,at:l.at,id:i}})}}
+const beName=(sp,L)=>((sp==='bike'?BIKE_BE:RUN_BE).find(a=>Math.abs(a[0]-L)<1)||[0,Math.round(L)+' m'])[1];
+// pace text (runs) or speed text (rides) for metres in seconds
+function paceTxt(m,sec,sp,p){const u=KM(p)*1000;return sp==='bike'?(m/sec*3600/u).toFixed(1)+' '+p.units+'/h':fmtT(sec/(m/u))+' /'+p.units}
+const elevTxt=(m,p)=>p.units==='mi'?Math.round(m*3.28084)+' ft':Math.round(m)+' m';
+/* the analysis panel: totals, pace and elevation chart, splits, best efforts */
+function trkHtml(trk,p,fresh){const sp=trk.sp,u=KM(p)*1000,run=sp==='run';
+  let h=`<div class="stats trk"><div><div class="num">${(trk.d/u).toFixed(2)}</div><span class="label">${p.units==='mi'?'Miles':'Km'}</span></div><div><div class="num">${fmtT(trk.mov)}</div><span class="label">Moving</span></div><div><div class="num">${paceTxt(trk.d,trk.mov,sp,p).split(' ')[0]}</div><span class="label">${run?'Avg pace':'Avg '+p.units+'/h'}</span></div>${trk.up!=null?`<div><div class="num">${elevTxt(trk.up,p).split(' ')[0]}</div><span class="label">Climb ${p.units==='mi'?'ft':'m'}</span></div>`:''}${trk.hr?`<div><div class="num">${trk.hr}</div><span class="label">Avg HR</span></div>`:''}</div>`;
+  // chart: speed line (up is faster) over a shaded elevation profile
+  const W=340,H=120,v=trk.pv.map(x=>x/100),sv=v.filter(x=>x>.3).sort((a,b)=>a-b);
+  if(sv.length>5){const lo=sv[Math.floor(sv.length*.05)]*.95,hi=sv[Math.floor(sv.length*.97)]*1.03,y=x=>H-8-(clamp(x,lo,hi)-lo)/((hi-lo)||1)*(H-24),X=k=>k/(v.length-1)*W;
+    let ep='';if(trk.pe){const e0=Math.min(...trk.pe),e1=Math.max(...trk.pe),r=Math.max(e1-e0,15),ey=e=>H-(e-e0)/r*(H*.55);ep=`<path d="M0 ${H}L${trk.pe.map((e,k)=>X(k).toFixed(1)+' '+ey(e).toFixed(1)).join('L')}L${W} ${H}Z" fill="var(--line)" opacity=".8"/>`}
+    const lab=x=>run?fmtT(u/x):(x*3.6/KM(p)).toFixed(1);
+    h+=`<div class="chartbox"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${run?'Pace':'Speed'} and elevation over the distance">${ep}<path d="M${v.map((x,k)=>X(k).toFixed(1)+' '+y(x).toFixed(1)).join('L')}" fill="none" stroke="var(--c)" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linejoin="round"/></svg>
+      <span class="ax t">${lab(hi)}</span><span class="ax b">${lab(lo)}</span></div><div class="rkey small muted"><span><i style="background:var(--c);border-radius:2px;height:3px;width:14px"></i>${run?'Pace /'+p.units:'Speed '+p.units+'/h'}</span>${trk.pe?`<span><i style="background:var(--line);border-radius:2px;width:14px"></i>Elevation</span>`:''}</div>`}
+  // splits
+  if(trk.spl.length>1){const mn=Math.min(...trk.spl.map(s=>s[0]/s[1]));
+    // bar: full width for the fastest split, 3% shorter for each 1% slower
+    h+=`<span class="label">Splits${run?'':' every 5 '+p.units}</span><table class="spl"><tr><th>${p.units}</th><th>${run?'Pace':'Speed'}</th><th></th>${trk.up!=null?'<th class="r">Climb</th>':''}${trk.hr?'<th class="r">HR</th>':''}</tr>${trk.spl.map((s,k)=>{const r=s[0]/s[1],w=clamp(100-(r-mn)/mn*300,12,100);
+      return`<tr><td>${s[1]<trk.su*.9?((k*trk.su+s[1])/u).toFixed(2):Math.round((k+1)*trk.su/u)}</td><td class="num">${paceTxt(s[1],s[0],sp,p).split(' ')[0]}</td><td class="bar"><i style="width:${s[1]<trk.su*.9?0:w.toFixed(0)}%"></i></td>${trk.up!=null?`<td class="r">${s[2]?'+'+elevTxt(s[2],p):'–'}</td>`:''}${trk.hr?`<td class="r">${s[3]||'–'}</td>`:''}</tr>`}).join('')}</table>`}
+  // best efforts in this workout
+  const be=Object.entries(trk.be||{}).sort((a,b)=>a[0]-b[0]);if(be.length){const nb=fresh?newBests(trk).map(b=>b.L):[],pb=(S.pb||{})[sp]||{};
+    h+=`<span class="label">Best efforts</span><div class="belist">${be.map(([L,s])=>{const isPB=nb.includes(+L)||(!fresh&&pb[L]&&pb[L].sec===s);return`<div${isPB?' class="pb"':''}><span>${beName(sp,+L)}</span><span class="num">${fmtT(s)}</span>${isPB?'<span class="pill">PB</span>':''}</div>`}).join('')}</div>`}
+  return h}
 // The route as a plain drawing: shown at once, and all there is offline.
 function routeSvg(r){const k=Math.cos(r[0][0]*Math.PI/180),xs=r.map(q=>q[1]*k),ys=r.map(q=>-q[0]),W=340,H=220,pad=18;
   const x0=Math.min(...xs),y0=Math.min(...ys),sw=Math.max(...xs)-x0||1e-9,sh=Math.max(...ys)-y0||1e-9,s=Math.min((W-2*pad)/sw,(H-2*pad)/sh),ox=(W-sw*s)/2,oy=(H-sh*s)/2;
-  const P=r.map((q,i)=>[(xs[i]-x0)*s+ox,(ys[i]-y0)*s+oy]),d='M'+P.map(p=>p[0].toFixed(1)+' '+p[1].toFixed(1)).join('L'),a=P[0],b=P[P.length-1];
-  return`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Route map"><path d="${d}" fill="none" stroke="var(--c)" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/>
+  const P=r.map((q,i)=>[(xs[i]-x0)*s+ox,(ys[i]-y0)*s+oy]),a=P[0],b=P[P.length-1];
+  const lines=routeRuns(r).map(g=>`<path d="M${g.idx.map(i=>P[i][0].toFixed(1)+' '+P[i][1].toFixed(1)).join('L')}" fill="none" stroke="${g.c==null?'var(--c)':PACE_COL[g.c]}" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/>`).join('');
+  return`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Route map">${lines}
     <circle cx="${b[0].toFixed(1)}" cy="${b[1].toFixed(1)}" r="6.5" fill="var(--ink)" stroke="var(--surface)" stroke-width="2.5"/><circle cx="${a[0].toFixed(1)}" cy="${a[1].toFixed(1)}" r="6.5" fill="var(--ok)" stroke="var(--surface)" stroke-width="2.5"/></svg>`}
+// consecutive stretches of the same pace band, each drawn as one line (one stretch in a single colour without bands)
+function routeRuns(r){const out=[];r.forEach((q,i)=>{const c=q.length>2?q[2]:null,g=out[out.length-1];if(i===0){out.push({c,idx:[0]});return}
+  if(g.c===c)g.idx.push(i);else out.push({c,idx:[i-1,i]})});return out}
 function routeKey(r){return r.length+':'+r[0].join()+':'+r[r.length-1].join()}
-function routeBlock(r){return`<div class="route" id="route-slot" data-key="${routeKey(r)}">${routeSvg(r)}</div>
-  <div class="rkey small muted"><span><i style="background:var(--ok)"></i>Start</span><span><i style="background:var(--ink)"></i>Finish</span></div>`}
+function routeBlock(r){const banded=r[0].length>2;return`<div class="route" id="route-slot" data-key="${routeKey(r)}">${routeSvg(r)}</div>
+  <div class="rkey small muted"><span><i style="background:var(--ok)"></i>Start</span><span><i style="background:var(--ink)"></i>Finish</span>${banded?`<span class="grow" style="text-align:right">Slower <b class="ramp">${PACE_COL.map(c=>`<i style="background:${c}"></i>`).join('')}</b> Faster</span>`:''}</div>`}
 // Street tiles: Leaflet is fetched the first time a map is shown, so it costs nothing until then.
 let curRoute=null,rmap=null,leafletP=null;
 function loadLeaflet(){if(window.L&&L.map)return Promise.resolve(L);
@@ -1060,17 +1218,18 @@ function mountRoute(){const slot=$('#route-slot');
     const el=document.createElement('div');el.className='rmap';el.innerHTML='<div class="m"></div><button class="chip" data-act="mapFull">Expand</button>';s.appendChild(el);
     const css=getComputedStyle(s),col=css.getPropertyValue('--c').trim()||'#0F4C81',okc=css.getPropertyValue('--ok').trim()||'#1B8553',ink=css.getPropertyValue('--ink').trim()||'#0F1E27',dark=getComputedStyle(document.documentElement).colorScheme==='dark';
     if(dark)el.classList.add('dark');
-    const map=L.map(el.firstChild,{zoomControl:false,dragging:false,boxZoom:false,keyboard:false,scrollWheelZoom:'center',zoomSnap:.25,zoomDelta:.5}),bounds=L.latLngBounds(r),
+    const map=L.map(el.firstChild,{zoomControl:false,dragging:false,boxZoom:false,keyboard:false,scrollWheelZoom:'center',zoomSnap:.25,zoomDelta:.5}),bounds=L.latLngBounds(r.map(q=>[q[0],q[1]])),
       fit=()=>map.fitBounds(bounds,{padding:[24,24],maxZoom:17,animate:false});
     fit(); // the view has to exist before the line is added, or the line is never drawn
     let got=0,bad=0;
     const drop=()=>{if(got||!rmap||rmap.map!==map)return;map.remove();el.remove();rmap={key,failed:true};ui.mapFull=false;const f=$('#mapfull');if(f)f.hidden=true};
     L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'})
       .on('tileload',()=>{got++;el.classList.add('on')}).on('tileerror',()=>{if(++bad>=4)drop()}).addTo(map);
-    L.polyline(r,{color:dark?'#000':'#fff',weight:8,opacity:.6,interactive:false}).addTo(map);
-    L.polyline(r,{color:col,weight:4.5,opacity:1,interactive:false}).addTo(map);
-    L.circleMarker(r[r.length-1],{radius:7,color:'#fff',weight:2.5,fillColor:ink,fillOpacity:1,interactive:false}).addTo(map);
-    L.circleMarker(r[0],{radius:7,color:'#fff',weight:2.5,fillColor:okc,fillOpacity:1,interactive:false}).addTo(map);
+    const ll=r.map(q=>[q[0],q[1]]);
+    L.polyline(ll,{color:dark?'#000':'#fff',weight:8,opacity:.6,interactive:false}).addTo(map);
+    routeRuns(r).forEach(g=>L.polyline(g.idx.map(i=>ll[i]),{color:g.c==null?col:PACE_COL[g.c],weight:4.5,opacity:1,interactive:false}).addTo(map));
+    L.circleMarker(ll[ll.length-1],{radius:7,color:'#fff',weight:2.5,fillColor:ink,fillOpacity:1,interactive:false}).addTo(map);
+    L.circleMarker(ll[0],{radius:7,color:'#fff',weight:2.5,fillColor:okc,fillOpacity:1,interactive:false}).addTo(map);
     rmap={key,el,map,full:false,fit};
     setTimeout(drop,10000);placeMap()}).catch(()=>{if(rmap&&rmap.key===key)rmap=null});}
 // The same map moves between the sheet and full screen, so zoom and tiles survive every redraw of the sheet.
@@ -1086,7 +1245,12 @@ function finishLive(){const p=S.profile,id=ui.live.id,LS=ui.live.steps,TR=ui.liv
   clearInterval(pollT);ui.live=null;lsSet('tripace.live',null);const km=(st.dist||0)/1000,min=Math.max(1,Math.round((st.elapsed||0)/60));
   const{w}=findW(id);const avg=km>0.05?(w.sp==='run'?fmtT(st.elapsed/(km/KM(p)))+' /'+p.units:(km/KM(p)/(st.elapsed/3600)).toFixed(1)+' '+p.units+'/h'):'';
   ui.sheet=id;ui.logging={min:String(min),dist:km>0.05?(km/KM(p)).toFixed(2)+' '+p.units:'',rpe:0,note:avg?(TR?'Trainer':'GPS')+': average '+avg:'',result:'',pr};
-  if(!TR){const r=simplifyRoute(st.route);if(r)ui.logging.route=r}
+  if(!TR&&Array.isArray(st.route)&&st.route.length>1){const an=analyzeTrack(st.route,w.sp==='bike'||w.sp==='brick'?'bike':'run',p);
+    if(an){if(w.sp==='brick')an.trk.be={}; // a ride and a run in one track: no best efforts
+      ui.logging.trk=an.trk;ui.logging.fresh=true;if(an.route)ui.logging.route=an.route;
+      // a new best over 5K or longer that beats the current run paces can become the basis for them
+      const off=an.trk.sp==='run'?newBests(an.trk).filter(b=>b.L>=5000&&vdot(b.L,b.sec)>p.vdot+.3).pop():null;if(off)ui.logging.pbOffer={L:off.L,sec:off.sec}}
+    else{const r=simplifyRoute(st.route.map(q=>[q[0],q[1]]));if(r)ui.logging.route=r}}
   if(TR){const ps=(st.steps||[]).filter(a=>a[3]>0&&LS[a[0]]&&LS[a[0]].sp==='b'),sec=ps.reduce((a,b)=>a+b[2],0);
     if(sec>0)ui.logging.note='Trainer: average '+Math.round(ps.reduce((a,b)=>a+b[3]*b[2],0)/sec)+' W'+(avg?', '+avg:'');
     const tt=ps.find(a=>LS[a[0]].name.startsWith('20-minute test'));if(tt&&w.k==='test')ui.logging.result=String(Math.round(tt[3]))}
