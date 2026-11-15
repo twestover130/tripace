@@ -704,6 +704,7 @@ function render(){const app=$('#app'),nav=$('#nav'),sheet=$('#sheet');
   const tabs=[['today','Today'],['plan','Plan'],['paces','Paces']].concat(NATIVE?[['coach','Coach']]:[],[['progress',NATIVE?'Stats':'Progress'],['settings','Settings']]);
   nav.hidden=false;nav.innerHTML='<div>'+tabs.map(([k,l])=>`<button data-act="tab" data-v="${k}" ${NATIVE?'style="font-size:.84rem"':''} ${ui.tab===k?'aria-current="page"':''}>${l}</button>`).join('')+'</div>';
   app.innerHTML={today:viewToday,plan:viewPlan,paces:viewPaces,progress:viewProgress,settings:viewSettings,coach:viewCoach}[ui.tab]();
+  if(ui.tab==='today'||ui.tab==='settings'){const V=appVer();app.insertAdjacentHTML('beforeend',`<p class="muted small" style="text-align:center;margin:20px 0 4px">Tripace ${V?'version '+esc(fmtVer(V.v))+(V.src==='update'?' · updated over the air':''):'web version'}</p>`)}
   if(ui.sheet){sheet.innerHTML=viewSheet();sheet.hidden=false}else sheet.hidden=true;
   renderLive()}
 function finishWizard(){const D=ui.draft,mode=ui.wizMode;delete D.peakAuto;
