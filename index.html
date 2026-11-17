@@ -790,7 +790,7 @@ function fmtVer(v){v=String(v);if(v.length!==12)return v;const d=new Date(Date.U
   return d.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'})+', '+d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'})}
 window.onAppUpdate=(state,v)=>{
   if(state==='ready'){ui.updReady=true;ui.upd='A new version ('+fmtVer(v)+') is downloaded.';if(!ui.live){const b=$('#updbar');if(b)b.hidden=false}}
-  else if(state==='apk'){ui.updApk=true;ui.upd='A new version needs the app itself reinstalled. Download it, open it, and tap Update. Your plan is kept.';if(ui.manual)toast('App reinstall needed: see Settings')}
+  else if(state==='apk'){const play=(appVer()||{}).play;ui.updApk=true;ui.upd=play?'A new version needs the app itself updated. Open the Play Store and tap Update (it can take a little while to appear). Your plan is kept.':'A new version needs the app itself reinstalled. Download it, open it, and tap Update. Your plan is kept.';if(ui.manual)toast(play?'App update needed: see Settings':'App reinstall needed: see Settings')}
   else if(state==='none'){ui.upd=ui.manual?'You have the latest version.':ui.upd}
   else if(state==='error'){ui.upd=ui.manual?'Could not reach the update site. Check your connection.':ui.upd}
   ui.manual=false;if(ui.tab==='settings'&&!ui.sheet&&!ui.live&&!ui.draft)render()};
@@ -818,7 +818,7 @@ function viewSettings(){const p=S.profile,pl=S.plan;
     if(ui.stravaMsg)h+=`<p class="err">${esc(ui.stravaMsg)}</p>`;
     h+=`</div>`}
   const V=appVer();if(V)h+=`<div class="panel"><h2>App updates</h2><p class="small">Version ${esc(fmtVer(V.v))}${V.src==='update'?' (updated over the air)':''}</p><p class="muted small">The app checks for updates each time it opens. New screens and plan changes download by themselves; you just restart the app to use them.</p>
-    ${ui.upd?`<p class="small">${esc(ui.upd)}</p>`:''}${ui.updApk?`<button class="btn block" data-act="updApk">Download the new app</button>`:''}${ui.updReady?`<button class="btn block" data-act="updReload">Restart to update</button>`:`<button class="btn line block" data-act="updCheck">Check for updates</button>`}</div>`;
+    ${ui.upd?`<p class="small">${esc(ui.upd)}</p>`:''}${ui.updApk?`<button class="btn block" data-act="updApk">${V.play?'Open the Play Store':'Download the new app'}</button>`:''}${ui.updReady?`<button class="btn block" data-act="updReload">Restart to update</button>`:`<button class="btn line block" data-act="updCheck">Check for updates</button>`}</div>`;
   const rm=p.runMode||'pace',noHr='Add your threshold or max heart rate under Paces → Update my fitness to see bpm targets.';
   if(SPORTS(p).includes('run'))h+=`<div class="panel"><h2>Run targets</h2><div class="chips">${chip('Pace','runMode','data-v="pace"',rm==='pace')}${chip('Heart rate','runMode','data-v="hr"',rm==='hr')}${chip('Mixed','runMode','data-v="mix"',rm==='mix')}${chip('Effort (RPE)','runMode','data-v="rpe"',rm==='rpe')}</div>
     <p class="muted small">${{pace:'Pace zones from your recent race or test.',hr:'Every run by heart-rate zone. Strides and time trials stay by feel.',mix:'Easy, steady and long runs by heart rate; tempo, intervals and race pace by pace.',rpe:'Effort suits trails, hills and treadmills, where pace means less.'}[rm]}</p>
