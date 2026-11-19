@@ -610,11 +610,11 @@ function runByDistance(steps,p){
   return steps.map(s=>s.rep?(s.of.some(o=>o.z==='r.rep'||o.n.startsWith('Uphill'))?s:Object.assign({},s,{of:s.of.map(one)})):one(s))}
 
 /* ---------- just do a workout: one session built from sport, type, and how far or how long ---------- */
-const QK={run:[['easy','Easy'],['long','Long'],['tempo','Tempo'],['int','Intervals'],['hills','Hills'],['race','Race pace'],['rec','Recovery']],
+const QK={run:[['easy','Easy'],['free','Free run'],['long','Long'],['tempo','Tempo'],['int','Intervals'],['hills','Hills'],['race','Race pace'],['rec','Recovery']],
   bike:[['end','Endurance'],['long','Long'],['rec','Recovery'],['tempo','Tempo'],['ss','Sweet spot'],['thr','Threshold'],['vo2','VO2 max'],['race','Race pace']],
   swim:[['easy','Easy'],['tech','Technique'],['end','Endurance'],['css','Threshold (CSS)'],['fast','Speed'],['race','Race pace']],
   strength:[['str','Strength'],['mob','Mobility']]};
-const QT={run:{easy:'Easy run',long:'Long run',tempo:'Tempo run',int:'Intervals',hills:'Hill repeats',race:'Race-pace run',rec:'Recovery run'},
+const QT={run:{easy:'Easy run',free:'Free run',long:'Long run',tempo:'Tempo run',int:'Intervals',hills:'Hill repeats',race:'Race-pace run',rec:'Recovery run'},
   bike:{end:'Endurance ride',long:'Long ride',rec:'Recovery ride',tempo:'Tempo ride',ss:'Sweet spot',thr:'Threshold intervals',vo2:'VO2 max bike',race:'Race-pace ride'},
   swim:{easy:'Easy swim',tech:'Technique swim',end:'Endurance swim',css:'Threshold swim',fast:'Speed swim',race:'Race-pace swim'},
   strength:{str:'Strength',mob:'Mobility'}};
@@ -661,7 +661,13 @@ function qSwim(q,A,byT,p){const pace=p.css+20,min=byT?A:(A/100+.01)*pace/60;
     return{min,steps:[s('Warm up',WU,'Mix freestyle with a little backstroke or kick'),s('Easy swim',Math.max(100,T-WU-CD),'Relaxed, long strokes. Pull buoy optional'),s('Cool down',CD)]}}
   const m={tech:['tech','base',0],end:['end','build',0],css:['key','base',0],fast:['key','build',1],race:['key','peak',0]}[q.kind];
   return{min,steps:swimSet({min,k:m[0],v:m[2]},m[1],p)}}
-function quickPlan(q,p){const A=parseFloat(String(q.amt).replace(',','.')),byT=qByT(q),title=(QT[q.sp]||{})[q.kind]||'Workout',why='Your own workout, set up just for this day.';
+/* a free run: no distance, no time, no pace target. It runs until you finish it, with a lap callout every half mile (every kilometre in km) */
+const isFree=q=>q&&q.sp==='run'&&q.kind==='free';
+const lapWords=p=>p.units==='mi'?'every half mile':'every kilometre';
+const wDur=w=>isFree(w.q)?'Open':fmtDur(w.min+(w.x||0));
+function quickPlan(q,p){if(isFree(q))return{title:'Free run',why:'No targets. Run however you like for as long as you like; Tripace calls out your distance and split '+lapWords(p)+'.',min:30,free:true,
+    steps:[{n:'Free run',open:true,note:'No pace target. Split callouts '+lapWords(p)}]};
+  const A=parseFloat(String(q.amt).replace(',','.')),byT=qByT(q),title=(QT[q.sp]||{})[q.kind]||'Workout',why='Your own workout, set up just for this day.';
   const unit=byT?'minutes':q.sp==='swim'?p.pool:p.units;
   if(!(A>0))return{title,err:'Enter how '+(byT?'long':'far')+'.'};
   const lim=byT?[5,600]:q.sp==='swim'?[200,10000]:q.sp==='bike'?[1,250]:[.5,60];
@@ -711,7 +717,7 @@ function newDraft(){const t=today(),start=dow(t)===0?t:addDays(monday(t),7);
 const chip=(label,act,attrs,on)=>`<button class="chip" data-act="${act}" ${attrs} aria-pressed="${on}">${label}</button>`;
 function woCard(w,wk){const p=S.profile,d=describe(w,wk,p),lg=S.log[w.id],dist=estDist(w,d,p);
   const label=w.sp==='brick'?'Brick':w.sp==='race'?(w.k==='prac'?'Practice race':'Race day'):w.sp[0].toUpperCase()+w.sp.slice(1);
-  return`<button class="wo c-${w.sp}${lg&&lg.s==='skip'?' is-skip':''}" data-act="open" data-id="${w.id}"><span class="bar c-${w.sp}"></span><span class="body"><span class="sp">${label} · ${fmtDur(w.min+(w.x||0))}${dist?' · '+dist:''}</span><h3>${esc(d.title)}</h3><span class="muted small">${esc(summary(d,p))}</span></span>${lg?`<span class="tick ${lg.s}">${lg.s==='done'?'Done':'Skipped'}</span>`:''}</button>`}
+  return`<button class="wo c-${w.sp}${lg&&lg.s==='skip'?' is-skip':''}" data-act="open" data-id="${w.id}"><span class="bar c-${w.sp}"></span><span class="body"><span class="sp">${label} · ${wDur(w)}${dist?' · '+dist:''}</span><h3>${esc(d.title)}</h3><span class="muted small">${esc(summary(d,p))}</span></span>${lg?`<span class="tick ${lg.s}">${lg.s==='done'?'Done':'Skipped'}</span>`:''}</button>`}
 function summary(d,p){const rep=d.steps.find(s=>s.rep);if(rep){const a=rep.of[0],t=target(a.z,p);return rep.rep+' × '+(a.km?fmtRun(a.km,p):fmtStep(a.min))+' '+a.n.toLowerCase()+(t?' @ '+t.text:'')}
   const main=d.steps.find(s=>s.reps>1&&s.z&&s.z!=='s.easy')||d.steps.find(s=>s.z&&s.n!=='Warm up')||d.steps[1]||d.steps[0];if(!main)return'';
   if(main.dist){const t=target(main.z,p);return(main.reps>1?main.reps+' × ':'')+main.dist+' '+p.pool+(t?' @ '+t.text:'')}
@@ -744,14 +750,14 @@ function viewQuick(){const Q=ui.quick,p=S.profile,byT=qByT(Q),plan=qPlanned(Q.da
   let h=`<div class="panel" id="quick"><div class="row"><h3 class="grow">Workout · ${Q.day===today()?'today':fmtDate(Q.day)}</h3><button class="chip" data-act="qCancel" aria-label="Close">✕</button></div>
     <span class="label">Sport</span><div class="chips">${['run','bike','swim','strength'].map(s=>chip(s==='strength'?'Strength':SPN[s],'qSet','data-k="sp" data-v="'+s+'"',Q.sp===s)).join('')}</div>
     <span class="label">Type</span><div class="chips">${QK[Q.sp].map(([k,l])=>chip(l,'qSet','data-k="kind" data-v="'+k+'"',Q.kind===k)).join('')}</div>
-    ${Q.sp==='strength'?'':`<div class="chips">${chip('How far','qSet','data-k="by" data-v="dist"',!byT)}${chip('How long','qSet','data-k="by" data-v="time"',byT)}</div>`}
-    <label class="field"><span>${byT?'Minutes':'Distance in '+(Q.sp==='swim'?(p.pool==='yd'?'yards':'metres'):p.units==='mi'?'miles':'km')}</span><input type="text" inputmode="decimal" id="q-amt" data-q="amt" value="${esc(Q.amt)}"></label>
+    ${Q.sp==='strength'||isFree(Q)?'':`<div class="chips">${chip('How far','qSet','data-k="by" data-v="dist"',!byT)}${chip('How long','qSet','data-k="by" data-v="time"',byT)}</div>
+    <label class="field"><span>${byT?'Minutes':'Distance in '+(Q.sp==='swim'?(p.pool==='yd'?'yards':'metres'):p.units==='mi'?'miles':'km')}</span><input type="text" inputmode="decimal" id="q-amt" data-q="amt" value="${esc(Q.amt)}"></label>`}
     <div id="q-prev" class="stack">${quickPrev()}</div>`;
   if(plan.length)h+=`<span class="label">Already planned that day</span><div class="chips">${plan.map(w=>chip('Replace '+esc(describe(w,findW(w.id).wk,p).title.toLowerCase()),'qSet','data-k="rep" data-v="'+w.id+'"',Q.rep===w.id)).join('')}${chip('Do both','qSet','data-k="rep" data-v="none"',Q.rep==='none')}</div><span class="muted small">Replace takes the planned workout off that day. Remove this workout later and the planned one comes back.</span>`;
   return h+`${Q.err?`<p class="err">${esc(Q.err)}</p>`:''}<div class="row"><button class="btn ghost" data-act="qCancel">Cancel</button><button class="btn grow" data-act="qGo">Set it up</button></div></div>`}
 function quickPrev(){const Q=ui.quick,p=S.profile,r=quickPlan(Q,p);if(r.err)return`<p class="muted small">${esc(r.err)}</p>`;
   const dist=estDist({sp:Q.sp},{steps:r.steps},p);
-  let h=`<div class="row"><strong class="grow">${esc(r.title)}</strong><span class="muted small">≈ ${fmtDur(Math.max(5,Math.round(r.min)))}${dist?' · '+dist.replace('≈ ',''):''}</span></div><div class="steps">${r.steps.map(s=>stepHtml(s,p,Q.sp)).join('')}</div>`;
+  let h=`<div class="row"><strong class="grow">${esc(r.title)}</strong><span class="muted small">${r.free?'As long as you like':`≈ ${fmtDur(Math.max(5,Math.round(r.min)))}${dist?' · '+dist.replace('≈ ',''):''}`}</span></div><div class="steps">${r.steps.map(s=>stepHtml(s,p,Q.sp)).join('')}</div>`;
   if(r.reps&&Q.kind!=='easy'){h+=`<div class="row"><span class="label grow">Reps</span><button class="chip" data-act="qReps" data-n="-1" aria-label="Fewer reps">−</button><span class="num" style="min-width:2ch;text-align:center">${r.reps}</span><button class="chip" data-act="qReps" data-n="1" aria-label="More reps">+</button></div>`;
     if(Q.kind!=='hills')h+=`<span class="label">Rep distance</span><div class="chips">${qRepChoices(Q,p).map(m=>chip(fmtRun(m/1000,p),'qSet','data-k="repM" data-v="'+m+'"',r.repM===m)).join('')}${Q.reps||Q.repM?chip('Auto','qSet','data-k="auto" data-v="1"',false):''}</div>`}
   return h}
@@ -763,7 +769,7 @@ function viewPlan(){const p=S.profile,pl=S.plan,n=pl.weeks.length,cw=curWeek();c
   const open=ui.openWeek??clamp(cw,0,n-1);
   pl.weeks.forEach((wk,i)=>{const m=sum(mins[i]),done=wk.w.filter(w=>S.log[w.id]&&S.log[w.id].s==='done').length;
     h+=`<div class="wk"><button data-act="toggleWeek" data-i="${i}" aria-expanded="${open===i}"><span class="wn">${i+1}</span><span class="grow" style="min-width:0"><strong>${fmtDate(wkStart(i)).slice(4)} – ${fmtDate(addDays(wkStart(i),6)).slice(4)}</strong>${i===cw?' <span class="pill">Now</span>':''}<br><span class="muted small">${PHASE[wk.ph]}${wk.rec?' · recovery':''} · ${fmtDur(m)} · ${done}/${wk.w.length} done</span></span><span class="muted">${open===i?'–':'+'}</span></button>`;
-    if(open===i){h+=`<div class="inner">`;for(let d=0;d<7;d++){const l=wk.w.filter(w=>w.d===d);if(!l.length)continue;h+=`<div class="dayrow"><span class="label" style="padding-top:7px">${DN[d]}</span><div>${l.map(w=>{const ds=describe(w,wk,p),lg=S.log[w.id];return`<button class="mini c-${w.sp}" data-act="open" data-id="${w.id}"><i></i><span class="grow">${esc(ds.title)}</span><span class="muted small num">${lg?(lg.s==='done'?'✓ ':'– '):''}${fmtDur(w.min+(w.x||0))}</span></button>`}).join('')}</div></div>`}h+=`</div>`}
+    if(open===i){h+=`<div class="inner">`;for(let d=0;d<7;d++){const l=wk.w.filter(w=>w.d===d);if(!l.length)continue;h+=`<div class="dayrow"><span class="label" style="padding-top:7px">${DN[d]}</span><div>${l.map(w=>{const ds=describe(w,wk,p),lg=S.log[w.id];return`<button class="mini c-${w.sp}" data-act="open" data-id="${w.id}"><i></i><span class="grow">${esc(ds.title)}</span><span class="muted small num">${lg?(lg.s==='done'?'✓ ':'– '):''}${wDur(w)}</span></button>`}).join('')}</div></div>`}h+=`</div>`}
     h+=`</div>`});
   return h}
 function viewPaces(){const p=S.profile,u=KM(p),R=RACES[p.race],F=fitForecast(p),r=F?F.fut:racePred(p),ahead=F&&F.now.total-F.fut.total>=30;
@@ -839,7 +845,8 @@ function fitSteps(steps,p){const out=[],cut=t=>t.length>60?t.slice(0,59)+'…':t
     [5,0x86,tgt[0]===11||tgt[0]===2?null:tgt[1]],[6,0x86,tgt[0]===11||tgt[0]===2?null:tgt[2]],[7,0,intensity],[8,7,notes?cut(notes):null,64]])};
   const repeat=(from,n)=>out.push([[254,0x84,out.length],[1,0,6],[2,0x86,from],[4,0x86,n]]);
   const kind=(s,rec)=>/^Warm/.test(s.n)?2:/^Cool/.test(s.n)?3:rec?4:0;
-  const one=(s,rec)=>{const t=target(s.z,p),txt=[t?t.text:'',s.note||''].filter(Boolean).join('. ');
+  const one=(s,rec)=>{if(s.open)return step(s.n,5,0,[2,0,0],0,s.note||''); // a free run: ends when you press lap
+    const t=target(s.z,p),txt=[t?t.text:'',s.note||''].filter(Boolean).join('. ');
     if(s.dist){const m=s.dist*(p.pool==='yd'?.9144:1),drill=/drill/i.test(s.n),first=out.length;
       step(s.n,1,Math.round(m*100),drill?[11,4]:[2,0,0],kind(s,false),txt);
       if(s.reps>1){if(s.rest)step('Rest',0,s.rest*1000,[2,0,0],1,'');repeat(first,s.reps)}return}
@@ -1018,7 +1025,7 @@ function viewSheet(){const{wk,i,w}=findW(ui.sheet),p=heatP(w),d=describe(w,wk,p)
   const route=(ui.logging&&ui.logging.route)||(lg&&lg.route)||null;curRoute=route;
   const label=w.sp==='brick'?'Brick':w.sp==='race'?(w.k==='prac'?'Practice race':'Race day'):w.sp[0].toUpperCase()+w.sp.slice(1);
   let h=`<div class="card c-${w.sp}"><div class="row"><div class="grow stack" style="gap:2px"><span class="label" style="color:var(--c)">${label} · ${fmtDate(date)}${w.date?'':' · Week '+(i+1)}</span><h2>${esc(d.title)}</h2></div><button class="chip" data-act="close" aria-label="Close">✕</button></div>
-    <div class="row"><span class="num" style="font-size:1.6rem">${w.k==='prac'?'Rehearsal':w.sp==='race'?fmtT(raceTime(p).total):fmtDur(w.min+(w.x||0))}</span>${dist?`<span class="muted">${dist}</span>`:''}${lg?`<span class="pill">${lg.s==='done'?'Done':'Skipped'}</span>`:''}</div>${route?routeBlock(route):''}`;
+    <div class="row"><span class="num" style="font-size:1.6rem">${w.k==='prac'?'Rehearsal':w.sp==='race'?fmtT(raceTime(p).total):wDur(w)}</span>${dist?`<span class="muted">${dist}</span>`:''}${lg?`<span class="pill">${lg.s==='done'?'Done':'Skipped'}</span>`:''}</div>${route?routeBlock(route):''}`;
   const trk=(ui.logging&&ui.logging.trk)||(lg&&lg.trk)||null,plan=`<p class="muted">${esc(d.why)}</p><div class="steps">${d.steps.map(s=>stepHtml(s,p,w.sp)).join('')}</div>`;
   if(trk)h+=trkHtml(trk,S.profile,!!(ui.logging&&ui.logging.fresh));
   // just finished: the log form comes straight after the results; the planned steps follow below it
@@ -1036,7 +1043,7 @@ function viewSheet(){const{wk,i,w}=findW(ui.sheet),p=heatP(w),d=describe(w,wk,p)
     if(lg&&lg.s==='done'&&lg.trk&&canExport(w.id)){const sv=stravaInfo(),busy=ui.stravaBusy===w.id;
       h+=`<div class="stack"><div class="row"><button class="btn line grow" data-act="gpx">Export GPX</button>${lg.strava?`<a class="btn ghost grow" href="https://www.strava.com/activities/${encodeURIComponent(lg.strava)}" style="text-align:center;text-decoration:none">View on Strava</a>`
         :sv.connected?`<button class="btn grow" data-act="stravaSend"${busy?' disabled':''}>${busy?'Sending…':'Send to Strava'}</button>`:''}</div>${!sv.connected&&!lg.strava?`<span class="muted small">To send workouts to Strava automatically, connect it under Settings.</span>`:''}</div>`}
-    const hasRun=(w.sp==='run'||w.sp==='brick')&&!(lg&&lg.s==='done');
+    const hasRun=(w.sp==='run'||w.sp==='brick')&&!(lg&&lg.s==='done')&&!isFree(w.q);
     if(hasRun&&p.runMode!=='rpe')h+=`<div class="stack"><span class="label">Conditions today</span><div class="chips">${chip('Normal','heat','data-v="0"',!w.heat)}${chip(p.units==='mi'?'Warm, 75–84°F':'Warm, 24–29°C','heat','data-v="0.03"',w.heat===0.03)}${chip(p.units==='mi'?'Hot, 85°F+':'Hot, 30°C+','heat','data-v="0.06"',w.heat===0.06)}</div>${w.heat?'<span class="muted small">Run pace targets above are slowed for the heat. Drink early and often.</span>':''}</div>`;
     if(NATIVE&&['run','bike','brick'].includes(w.sp)&&!(lg&&lg.s==='done'))h+=w.sp==='run'?`<button class="btn block" data-act="liveStart">Start with GPS</button><button class="btn line block" data-act="liveStartIndoor">Start indoors, timer only</button>`
       :`<div class="stack"><span class="label">Where are you riding?</span><div class="row"><button class="btn grow" data-act="liveStart">Outdoors</button><button class="btn grow" data-act="liveStartTrainer">On the trainer</button></div><span class="muted small">Outdoors tracks with GPS. On the trainer connects to your smart trainer over Bluetooth and sets its resistance to each step's target watts${S.profile.ftp?'':'. Add your FTP under Paces first, or the trainer is read but not controlled'}.</span></div>`;
@@ -1197,6 +1204,7 @@ const speakTarget=t=>t.replace(/–/g,' to ').replace('/mi','per mile').replace(
 /* indoors (treadmill, trainer) there is no GPS distance, so distance steps run on their estimated time instead */
 function flatSteps(d,p,indoor){const out=[];
   const add=(s,i,n)=>{if(s.rep){for(let r=1;r<=s.rep;r++)s.of.forEach(o=>add(o,r,s.rep));return}
+    if(s.open){out.push({name:s.n,sp:'r',open:true,sec:0,m:0,lo:0,hi:0,hrLo:0,hrHi:0,target:'No target · splits '+lapWords(p),say:s.n+'. No targets. I will call out your splits '+lapWords(p)+'.'});return}
     if(!s.min&&!s.km){if(s.n==='Transition')out.push({name:'Transition',sp:'r',sec:180,m:0,lo:0,hi:0,target:s.note,say:'Transition. Rack the bike and get your run shoes on.'});return}
     const t=target(s.z,p),sp=s.z[0]==='r'?'r':'b';let lo=0,hi=0;
     if(s.z==='r.race'){const v=1000/runSecPerKm(p,s.z);lo=v*.985;hi=v*1.015}
@@ -1392,18 +1400,18 @@ function renderLive(){const el=$('#live');if(!ui.live){el.hidden=true;liveKey=''
   const L=ui.live,st=L.st||{},p=S.profile,um=KM(p)*1000,n=L.steps.length,i=clamp(st.idx||0,0,n-1),s=L.steps[i],nx=L.steps[i+1],isRun=s.sp==='r',fin=!!st.finished,v=st.speed||0;
   const tr=!!L.trainer&&!isRun,hrMain=!tr&&s.hrHi>0&&!fin,hrOn=!!L.hrm,key=[i,!!st.paused,fin,!!L.confirm].join();
   if(key!==liveKey){liveKey=key;el.hidden=false;el.innerHTML=`<div class="lv c-${isRun?'run':'bike'}">
-    <div class="stack" style="gap:4px"><span class="label" style="color:var(--c)">${fin?'All steps done':'Step '+(i+1)+' of '+n}${st.paused?' · paused':''}</span><h1>${fin?'Workout complete':esc(s.name)}</h1><p class="muted">${fin?'Keep moving to cool down, then finish.':esc(s.target||'By feel')}</p></div>
-    <div class="lvbig"><div><span class="label">${fin?'Total time':s.m?'Distance left':'Time left'}</span><div class="num" id="lv-rem"></div>${s.m&&!fin?'<span class="muted small" id="lv-step"></span>':''}</div><div><span class="label">${tr?'Power, watts':hrMain?'Heart rate':isRun?'Pace /'+p.units:'Speed '+p.units+'/h'}</span><div class="num" id="lv-cur"></div><span class="pill" id="lv-state"></span></div></div>
+    <div class="stack" style="gap:4px"><span class="label" style="color:var(--c)">${fin?'All steps done':s.open?'No targets':'Step '+(i+1)+' of '+n}${st.paused?' · paused':''}</span><h1>${fin?'Workout complete':esc(s.name)}</h1><p class="muted">${fin?'Keep moving to cool down, then finish.':esc(s.target||'By feel')}</p></div>
+    <div class="lvbig"><div><span class="label">${fin||s.open?'Total time':s.m?'Distance left':'Time left'}</span><div class="num" id="lv-rem"></div>${s.m&&!fin?'<span class="muted small" id="lv-step"></span>':''}</div><div><span class="label">${tr?'Power, watts':hrMain?'Heart rate':isRun?'Pace /'+p.units:'Speed '+p.units+'/h'}</span><div class="num" id="lv-cur"></div><span class="pill" id="lv-state"></span></div></div>
     <div class="stats"${hrOn?' style="grid-template-columns:repeat(2,1fr)"':''}><div><div class="num" id="lv-dist"></div><span class="label">${p.units==='mi'?'Miles':'Km'}</span></div><div><div class="num" id="lv-time"></div><span class="label">Elapsed</span></div><div><div class="num" id="lv-avg"></div><span class="label">${tr?'Cadence':'Average'}</span></div>${hrOn?`<div><div class="num" id="lv-hr"></div><span class="label">${hrMain?(isRun?'Pace':'Speed'):'Heart rate'}</span></div>`:''}</div>
     <p class="muted small" id="lv-gps"></p>${hrOn?'<p class="muted small" id="lv-hrs" style="margin-top:-6px"></p>':''}${nx&&!fin?`<p class="muted"><strong>Next:</strong> ${esc(nx.name)} · ${nx.m?fmtRun(nx.m/1000,p):fmtStep(nx.sec/60)}${nx.target?' · '+esc(nx.target):''}</p>`:''}
     <div style="flex:1"></div>
     ${tr&&!fin?`<div class="row"><button class="chip" data-act="liveBias" data-n="-0.05">Easier 5%</button><span class="grow muted small" id="lv-bias" style="text-align:center"></span><button class="chip" data-act="liveBias" data-n="0.05">Harder 5%</button></div>`:''}
     ${L.confirm?`<div class="row"><button class="btn grow" data-act="liveFinishYes">Finish and save</button><button class="btn ghost grow" data-act="liveFinishNo">Keep going</button></div>`
-      :`<div class="row"><button class="btn ghost grow" data-act="livePause">${st.paused?'Resume':'Pause'}</button>${fin?'':'<button class="btn ghost grow" data-act="liveSkip">Skip step</button>'}<button class="btn grow" data-act="liveFinish">Finish</button></div>`}</div>`}
+      :`<div class="row"><button class="btn ghost grow" data-act="livePause">${st.paused?'Resume':'Pause'}</button>${fin||s.open?'':'<button class="btn ghost grow" data-act="liveSkip">Skip step</button>'}<button class="btn grow" data-act="liveFinish">Finish</button></div>`}</div>`}
   const set=(id,t)=>{const e=$('#'+id);if(e&&e.textContent!==t)e.textContent=t};
   const fmtV=x=>x>0.4?(isRun?fmtT(um/x):(x*3.6/KM(p)).toFixed(1)):'–';
   const left=Math.max(0,s.m-(st.stepDist||0));
-  set('lv-rem',fin?fmtT(st.elapsed||0):s.m?(s.m<1500||left<1000?Math.round(left)+' m':fmtDist(left/1000,p)):fmtT(Math.max(0,s.sec-(st.stepElapsed||0))));
+  set('lv-rem',fin||s.open?fmtT(st.elapsed||0):s.m?(s.m<1500||left<1000?Math.round(left)+' m':fmtDist(left/1000,p)):fmtT(Math.max(0,s.sec-(st.stepElapsed||0))));
   set('lv-step',!fin&&s.m?'This step '+fmtT(st.stepElapsed||0):'');
   const bpm=st.hr>0?String(st.hr):'–';
   set('lv-cur',tr?(st.power>=0?String(st.power):'–'):hrMain?bpm:fmtV(v));if(hrOn){set('lv-hr',hrMain?fmtV(v):bpm);set('lv-hrs',hrMsg(st))}set('lv-bias',st.bias&&Math.abs(st.bias-1)>.01?'Intensity '+Math.round(st.bias*100)+'%':'');
@@ -1422,7 +1430,7 @@ Plan: week ${cw+1} of ${n}, ${PHASE[wk.ph]} phase${wk.rec?', recovery week':''}.
 Experience by sport: ${SPORTS(p).map(s=>s+' '+LEVELS[SL(p,s)]).join(', ')}.
 Predicted race time at today's fitness ${fmtT(r.total)} (${r.legs.map(l=>l.label+' '+fmtT(l.t)).join(', ')}).${(F=>F&&F.now.total-F.fut.total>=30?' Race-day forecast if they keep training as planned: '+fmtT(F.fut.total)+'.':'')(fitForecast(p))}
 ${SPORTS(p).map(s=>({run:'Run zones: '+['r.easy','r.steady','r.thr','r.int','r.race'].map(z).join('; '),bike:'Bike zones: '+['b.end','b.tempo','b.ss','b.thr','b.vo2','b.race'].map(z).join('; '),swim:'Swim zones: '+['s.easy','s.steady','s.css','s.race'].map(z).join('; ')}[s])).join('.\n')}.
-This week: ${wk.w.map(w=>DN[w.d]+' '+describe(w,wk,p).title+' '+fmtDur(w.min+(w.x||0))+(S.log[w.id]?' ['+S.log[w.id].s+']':'')).join('; ')}.
+This week: ${wk.w.map(w=>DN[w.d]+' '+describe(w,wk,p).title+' '+wDur(w)+(S.log[w.id]?' ['+S.log[w.id].s+']':'')).join('; ')}.
 Recently completed: ${recent.join('; ')||'nothing logged yet'}.`}
 function chatSend(){const el=$('#chat-in'),t=(el&&el.value||'').trim();if(!t||chatBusy||!cfg.url)return;chat.push({role:'user',content:t});chatBusy=true;
   const msgs=[{role:'system',content:coachContext()}].concat(chat.filter(m=>!m.err).slice(-12).map(m=>({role:m.role,content:m.content})));
