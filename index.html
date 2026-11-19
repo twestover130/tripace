@@ -330,21 +330,29 @@ function racePred(p){const R=RACES[p.race],k=R.tier,legs=[];let total=0;
     legs.push({label:SPN[l.sp],sp:l.sp,d:l.d,t});total+=t});
   return{legs,total,kph,runPace,swim100:(cssM+{sprint:2,olympic:4,half:6,full:9}[k])*(p.pool==='yd'?0.9144:1)}}
 /* Race-day forecast: the fitness the plan should build by race day, from the fitness you last entered or tested.
-   Gains come fastest early and level off (time constant 12 weeks); newer athletes have more to gain.
-   Taper weeks bring freshness, not new fitness. Missed sessions so far shrink the gain already banked;
-   the weeks still ahead assume you train as planned. Paces for workouts stay at today's fitness. */
-const GAIN_CAP=[.10,.06,.035],GAIN_TAU=12;
+   Gains come fastest early and level off (time constant 16 weeks); newer athletes have more to gain.
+   Run: share of race time cut (an intermediate runner 27 weeks out: about 14%, in line with Runna's forecasts).
+   Bike: share of power gained. Swim: share of threshold pace cut.
+   Missed sessions so far shrink the gain already banked; the weeks still ahead assume you train as planned.
+   Paces for workouts stay at today's fitness. */
+const GAIN_CAP={run:[.22,.17,.10],bike:[.20,.15,.08],swim:[.15,.10,.05]},GAIN_TAU=16;
+/* the VDOT whose race times are f times today's (f < 1 is faster) */
+function vdotFor(vd,f){const T=predict(vd,10000)*f;let lo=vd,hi=85;for(let i=0;i<30;i++){const m=(lo+hi)/2;if(predict(m,10000)>T)lo=m;else hi=m}return(lo+hi)/2}
 function fitForecast(p){const R=RACES[p.race],pl=S.plan;if(!pl)return null;
-  const end=addDays(p.raceDate,-7*R.taper),t=today(),out={};
+  const end=p.raceDate,t=today(),out={};
   SPORTS(p).forEach(sp=>{const base=[(p.fitAt||{})[sp]||pl.start,pl.start].sort().pop(),W=Math.max(0,dayDiff(base,end)/7),past=clamp(dayDiff(base,t)/7,0,W);
     let due=0,done=0;pl.weeks.forEach((wk,i)=>wk.w.forEach(w=>{if(w.sp!==sp&&!(w.sp==='brick'&&sp!=='swim'))return;const d=w.date||addDays(wkStart(i),w.d);
       if(d>=base&&d<t){due++;const l=S.log[w.id];if(l&&l.s==='done')done++}}));
     const adh=due>=4?clamp(done/due,0,1):1,frac=W?past/W:0;
-    out[sp]=GAIN_CAP[SL(p,sp)]*(1-Math.exp(-W/GAIN_TAU))*(frac*adh+(1-frac));out[sp+'Adh']=due>=4?adh:null});
+    out[sp]=GAIN_CAP[sp][SL(p,sp)]*(1-Math.exp(-W/GAIN_TAU))*(frac*adh+(1-frac));out[sp+'Adh']=due>=4?adh:null});
   const g=sp=>out[sp]||0,q=Object.assign({},p);
-  q.vdot=clamp(p.vdot*(1+g('run')),18,85);q.css=p.css*(1-g('swim'));q.kph=p.kph*Math.cbrt(1+g('bike'));if(p.ftp)q.ftp=p.ftp*(1+g('bike'));
+  q.vdot=g('run')?clamp(vdotFor(p.vdot,1-g('run')),18,85):p.vdot;q.css=p.css*(1-g('swim'));q.kph=p.kph*Math.cbrt(1+g('bike'));if(p.ftp)q.ftp=p.ftp*(1+g('bike'));
   const now=racePred(p),fut=racePred(q),weeks=Math.max(0,Math.round(dayDiff(t,end)/7));
-  return{now,fut,gain:out,weeks,adh:Math.min(...SPORTS(p).map(sp=>out[sp+'Adh']??1))}}
+  return{now,fut,q,gain:out,weeks,adh:Math.min(...SPORTS(p).map(sp=>out[sp+'Adh']??1))}}
+/* "3:47 – 3:56": the likely spread around a forecast, about 2% faster to 1.7% slower, rounded to whole minutes over an hour */
+function timeRange(sec){const r=sec>=3600?60:10,lo=Math.round(sec*.98/r)*r,hi=Math.round(sec*1.017/r)*r;return fmtT(lo)+' – '+fmtT(hi)}
+/* "−3m 45s" / "−1h 2m" */
+function fmtGain(sec){sec=Math.round(sec);const h=Math.floor(sec/3600),m=Math.floor(sec%3600/60),s=sec%60;return'−'+(h?h+'h '+m+'m':m?m+'m '+s+'s':s+'s')}
 /* the time to show for race day: the forecast when there is a plan, otherwise today's fitness */
 const raceTime=p=>{const f=fitForecast(p);return f?f.fut:racePred(p)};
 
@@ -759,11 +767,17 @@ function viewPlan(){const p=S.profile,pl=S.plan,n=pl.weeks.length,cw=curWeek();c
     h+=`</div>`});
   return h}
 function viewPaces(){const p=S.profile,u=KM(p),R=RACES[p.race],F=fitForecast(p),r=F?F.fut:racePred(p),ahead=F&&F.now.total-F.fut.total>=30;
-  const why=!F?'':F.weeks>0?`${F.weeks} week${F.weeks>1?'s':''} of training left before your taper.`+(F.adh<.8?` You've done ${Math.round(F.adh*100)}% of your sessions so far, which trims the gain; workouts you don't log count as missed.`:''):'Your training is done: this is what it built.';
-  let h=`<div class="panel"><div class="row"><h2 class="grow">${ahead?'Race-day forecast':'Race prediction'}</h2><span class="num" style="font-size:2rem">${fmtT(r.total)}</span></div>${r.legs.length>1?`<div class="splits">${r.legs.map(l=>`<div><span class="label" style="color:${l.sp?`var(--${l.sp})`:''}">${l.label}</span><span class="num" style="font-size:1.2rem">${fmtT(l.t)}</span></div>`).join('')}</div>`:''}
-    ${ahead?`<div class="row"><span class="muted grow">If you raced today</span><span class="num">${fmtT(F.now.total)}</span></div><div class="row"><span class="muted grow">Expected improvement</span><span class="num" style="color:var(--ok)">−${fmtT(F.now.total-F.fut.total)}</span></div>`:''}
-    <p class="muted small">${esc(R.name)} on a flat course in mild conditions${ahead?', if you keep training as planned. '+why+' Workout paces stay at your current fitness and step up when a test, race result or pace update shows you are fitter.':'. '+why+' It moves as your fitness updates.'}</p></div>`;
-  const SP=SPORTS(p);
+  const SP=SPORTS(p),runOnly=R.legs.length===1&&R.legs[0].sp==='run';
+  const why=!F?'':F.weeks>0?(F.adh<.8?` You've done ${Math.round(F.adh*100)}% of your sessions so far, which trims the gain; workouts you don't log count as missed.`:''):' Your training is done: this is what it built.';
+  const cell=(now,fut)=>`<td class="r num">${fmtT(now)}</td><td class="r"><span class="num" style="font-size:1.1rem">${fmtT(fut)}</span>${now-fut>=1?`<br><span class="small num" style="color:var(--ok)">${fmtGain(now-fut)}</span>`:''}</td>`;
+  const DIST=[[5000,'5K'],[10000,'10K'],[21097.5,'Half marathon'],[42195,'Marathon']],raceM=runOnly?R.legs[0].d*1000:0;
+  let h=`<div class="panel"><h2>${ahead?'Estimated race times':'Race prediction'}</h2>
+    <span class="label">${esc(p.raceName||R.name)}${ahead?' · race day':''}</span><span class="num" style="font-size:2rem;line-height:1.1">${ahead?timeRange(r.total):fmtT(r.total)}</span>${ahead?`<span class="muted small">Most likely <strong class="num">${fmtT(r.total)}</strong></span>`:''}
+    ${r.legs.length>1?`<div class="splits">${r.legs.map(l=>`<div><span class="label" style="color:${l.sp?`var(--${l.sp})`:''}">${l.label}</span><span class="num" style="font-size:1.2rem">${fmtT(l.t)}</span></div>`).join('')}</div>`:''}
+    ${ahead?`<table><tr><th></th><th class="r">Current</th><th class="r">${F.weeks?'In '+F.weeks+' week'+(F.weeks>1?'s':''):'Race day'}</th></tr>
+      ${runOnly?'':`<tr><td><strong>${esc(R.name)}</strong></td>${cell(F.now.total,F.fut.total)}</tr>`}
+      ${SP.includes('run')?DIST.map(([m,l])=>`<tr><td>${Math.abs(m-raceM)<1?'<strong>'+l+'</strong>':l}</td>${cell(predict(p.vdot,m),predict(F.q.vdot,m))}</tr>`).join(''):''}</table>`:''}
+    <p class="muted small">${ahead?`If you keep training as planned, on a flat course in mild conditions.${why} Run times are stand-alone races. Workout paces stay at your current fitness and step up when a test, race result or pace update shows you are fitter.`:`${esc(R.name)} estimate on a flat course in mild conditions.${why} It moves as your fitness updates.`}</p></div>`;
   if(SP.includes('swim'))h+=`<div class="panel"><div class="row"><h2 class="grow" style="color:var(--swim)">Swim</h2>${p.est.swim?'<span class="pill">Estimated from level</span>':''}</div><table><tr><th>Zone</th><th class="r">Pace /100 ${p.pool}</th></tr>${['s.easy','s.steady','s.css','s.fast','s.race'].map(z=>{const t=target(z,p);return`<tr><td>${t.name}</td><td class="r">${t.text.replace(/ \/.*/,'')}</td></tr>`}).join('')}</table>
     <p class="muted small">Equivalent times: ${[100,400,p.pool==='yd'?1650:1500].map(d=>d+' '+p.pool+' '+fmtT(p.css/(SWIM_FAC[d])*d/100)).join(' · ')}</p></div>`;
   let mode=p.bikeMode;const note=mode==='power'&&!p.ftp?'Add your FTP to see watt targets. Showing effort for now.':(mode==='hr'||mode==='mix')&&!p.lthr?'Add your threshold or max heart rate to see bpm targets. Showing '+(mode==='mix'?'effort for easy rides':'effort')+' for now.':mode==='speed'?'Flat-road speeds in calm air, scaled from your steady 1-hour speed. On hills or in wind, hold the effort, not the number.':'';
