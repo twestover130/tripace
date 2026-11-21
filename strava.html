@@ -1,6 +1,7 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Back to Tripace</title>
+<title>Back to Tripace Pro</title>
+<meta name="robots" content="noindex">
 <style>
 :root{--bg:#EEF2F4;--ink:#0F1E27;--muted:#566873;--accent:#0F4C81;--on:#fff}
 @media (prefers-color-scheme:dark){:root{--bg:#0C1317;--ink:#E9EFF2;--muted:#93A3AD;--accent:#6DB3F2;--on:#06131C}}
@@ -10,13 +11,13 @@ a{display:inline-block;background:var(--accent);color:var(--on);text-decoration:
 </style></head>
 <body><main>
 <h1 id="h">Strava is connected</h1>
-<p id="t">Returning you to Tripace…</p>
-<a id="go" href="#">Open Tripace</a>
+<p id="t">Returning you to Tripace Pro…</p>
+<a id="go" href="#">Open Tripace Pro</a>
 </main>
 <script>
-// Strava sends the browser here after sign-in; this hands the one-time code to the Tripace app on this phone.
+// Strava sends the browser here after sign-in; this hands the one-time code to the Tripace Pro app on this phone.
 var q = location.search || '';
-if (/[?&]error=/.test(q)) { document.getElementById('h').textContent = 'Strava was not connected'; document.getElementById('t').textContent = 'Go back to Tripace and try again.'; }
+if (/[?&]error=/.test(q)) { document.getElementById('h').textContent = 'Strava was not connected'; document.getElementById('t').textContent = 'Go back to Tripace Pro and try again.'; }
 var link = 'intent://strava' + q + '#Intent;scheme=tripace;package=app.tripace;end';
 document.getElementById('go').href = link;
 setTimeout(function () { location.href = link; }, 300);
