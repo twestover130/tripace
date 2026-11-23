@@ -749,6 +749,8 @@ function viewToday(){const p=S.profile,pl=S.plan,n=pl.weeks.length,t=today();let
   let h=`<div class="bib"><div class="stack" style="gap:4px;min-width:0"><span class="label">${esc(R.name)} · ${fmtDate(p.raceDate)}</span><h1>${esc(p.raceName||R.name)}</h1><span class="small" style="opacity:.8">Week ${clamp(cw+1,1,n)} of ${n} · ${PHASE[pl.weeks[clamp(cw,0,n-1)].ph]}${pl.weeks[clamp(cw,0,n-1)].rec?' · recovery':''}</span></div><div style="text-align:right"><div class="num big">${bigNum}</div><span class="label">${bigLab}</span></div></div>`;
   const miss=missed();
   if(miss.length>=3)h+=`<div class="panel" style="border:2px solid var(--warn)"><h3>You have missed ${miss.length} workouts this week</h3><p class="muted">Do not try to make them up. Ease back in turns the next five days into easy sessions so you rejoin the plan safely. Carry on leaves the plan as it is.</p><div class="row"><button class="btn grow" data-act="realign" data-v="ease">Ease back in</button><button class="btn ghost grow" data-act="realign" data-v="carry">Carry on</button></div></div>`;
+  // every so often: when recent GPS-tracked speed runs say the paces no longer fit, offer the change here too
+  if(SPORTS(p).includes('run')){const pi=paceInsight();if(pi.adj)h+=`<div class="panel" style="border:2px solid var(--accent)"><h3>Pace check: ${esc(pi.title.toLowerCase())}</h3><p class="muted small">${esc(pi.text)}</p><div class="row"><button class="btn grow" data-act="piAccept">Update my run paces</button><button class="btn ghost grow" data-act="piLater">Keep them</button></div></div>`}
   if(cw<0)h+=`<div class="panel"><p><strong>Your plan starts ${fmtDate(pl.start)}.</strong> Here is your first week. Tap any workout to see the full session.</p></div>`;
   h+=`<div class="panel"><div class="row"><button class="chip" data-act="week" data-n="-1" aria-label="Previous week">‹</button><span class="grow label" style="text-align:center">Week ${wi+1} · ${PHASE[wk.ph]}${wk.rec?' · recovery':''}</span><button class="chip" data-act="week" data-n="1" aria-label="Next week">›</button></div><div class="strip">`;
   for(let d=0;d<7;d++){const ds=addDays(ws,d);h+=`<button class="day${ds===t?' today':''}" data-act="day" data-d="${ds}" aria-pressed="${ds===day}"><span class="label">${DN[d][0]}</span><span class="dn">${pd(ds).getDate()}</span><span class="dots">${wk.w.filter(w=>w.d===d).map(w=>`<i class="dot c-${w.sp} ${S.log[w.id]?S.log[w.id].s:''}"></i>`).join('')}</span></button>`}
@@ -1061,6 +1063,19 @@ function stepHtml(s,p,sp){
   const t=target(s.z,p);let q=s.q||'';if(s.dist)q=(s.reps>1?s.reps+' × ':'')+s.dist+' '+p.pool;else if(s.km)q=s.z==='r.tt'?'5K':fmtRun(s.km,p)+(s.min?' · ≈ '+fmtStep(Math.round(s.min)||1):'');else if(s.min)q=fmtStep(s.min);
   const z=[t?`${t.name}: ${t.text}`:'',s.rest?s.rest+'s rest':'',s.note||''].filter(Boolean).join(' · ');
   return`<div class="step"><span class="t">${esc(s.n)}</span><span class="q">${esc(q)}</span>${z?`<span class="z">${esc(z)}</span>`:''}</div>`}
+/* speed work in a run: any step with a pace target above easy (hill reps are run by effort, so they don't count) */
+const HARDZ=new Set(['r.steady','r.thr','r.int','r.race']);
+const hasSpeed=d=>{const f=s=>s.rep?s.of.some(f):HARDZ.has(s.z)&&!(s.n||'').startsWith('Uphill');return d.steps.some(f)};
+/* VDOT change offered after a speed workout, dir +1 faster / −1 slower: from the GPS pace held on the hard steps when it
+   points the same way (damped, since one session is noisy), otherwise a fixed step of about 2% of pace */
+function paceAdjFor(L,p,dir){if(!dir)return 0;const m=L.pr||0;if(m&&Math.sign(m-1)===dir&&Math.abs(m-1)>=.02)return clamp(p.vdot*(m-1)*.6,-1.5,1.5);return dir*.8}
+function paceChoice(L){const b=S.profile,pct=L.pr?(L.pr-1)*100:null,dir=L.paceDir||0,sug=pct!=null&&Math.abs(pct)>=2?Math.sign(pct):0;
+  const msg=pct==null?'How did the paces feel on the hard parts? Your choice sets every run pace from your next workout.':Math.abs(pct)<2?`On the hard parts you held your target pace, within ${Math.abs(pct).toFixed(1)}%.`:`On the hard parts you averaged <strong>${Math.abs(pct).toFixed(1)}% ${pct>0?'faster':'slower'}</strong> than target.`;
+  let prev='';if(dir){const wk=monday(today()),now=fitAt(b,wk),nxt=fitAt(Object.assign({},b,{vdot:b.vdot+paceAdjFor(L,b,dir)}),wk);
+    prev=!useHr('r.thr',now)&&b.runMode!=='rpe'?`Threshold ${target('r.thr',now).text} → <strong>${target('r.thr',nxt).text}</strong>, and every other run zone moves with it.`:`Every run pace zone moves about ${Math.abs((predict(now.vdot,10000)/predict(nxt.vdot,10000)-1)*100).toFixed(1)}% ${dir>0?'faster':'slower'}.`;
+    prev=`<p class="small muted">${prev} You can undo it on the Paces tab.</p>`}
+  return`<div class="panel" style="gap:8px"><h3>Your paces from here</h3><p class="small">${msg}</p>
+    <div class="chips">${chip('Slower'+(sug<0?' (suggested)':''),'paceDir','data-v="-1"',dir===-1)}${chip('Keep','paceDir','data-v="0"',dir===0)}${chip('Faster'+(sug>0?' (suggested)':''),'paceDir','data-v="1"',dir===1)}</div>${prev}</div>`}
 function viewSheet(){const{wk,i,w}=findW(ui.sheet),p=heatP(w),d=describe(w,wk,p),lg=S.log[w.id],date=w.date||addDays(wkStart(i),w.d),dist=estDist(w,d,p);
   const route=(ui.logging&&ui.logging.route)||(lg&&lg.route)||null;curRoute=route;
   const label=w.sp==='brick'?'Brick':w.sp==='race'?(w.k==='prac'?'Practice race':'Race day'):w.sp[0].toUpperCase()+w.sp.slice(1);
@@ -1073,6 +1088,7 @@ function viewSheet(){const{wk,i,w}=findW(ui.sheet),p=heatP(w),d=describe(w,wk,p)
   if(ui.logging){const L=ui.logging,test=w.k==='test',nb=L.fresh&&L.trk?newBests(L.trk).filter(b=>b.was):[];
     if(nb.length)h+=`<div class="panel" style="border:2px solid var(--ok);gap:6px"><h3>New personal best${nb.length>1?'s':''}</h3>${nb.map(b=>`<p class="small">${beName(L.trk.sp,b.L)} <strong class="num">${fmtT(b.sec)}</strong> <span class="muted">was ${fmtT(b.was)}</span></p>`).join('')}
       ${L.pbOffer?`<button class="chip" data-act="usePB" aria-pressed="${!!L.usePB}">Update my run paces from this ${beName('run',L.pbOffer.L)} (${fmtT(L.pbOffer.sec)})</button>`:''}</div>`;
+    if(w.sp==='run'&&!test&&!lg&&hasSpeed(d)&&!L.usePB)h+=paceChoice(L);
     h+=`<div class="stack" style="border-top:1px solid var(--line);padding-top:14px"><h3>Log this workout</h3>${test?`<label class="field"><span>${w.sp==='swim'?'400 time (m:ss)':w.sp==='run'?'5K time (m:ss)':'20-minute average power (watts)'}</span><input type="text" inputmode="numeric" ${w.sp!=='bike'?'data-time="1"':''} id="l-res" data-l="result" value="${esc(L.result)}" placeholder="${w.sp==='bike'?'e.g. 232':'e.g. '+(w.sp==='swim'?'7:10':'24:50')}"></label>`:''}
       <div class="row"><label class="field"><span>Minutes</span><input type="text" inputmode="numeric" id="l-min" data-l="min" value="${esc(L.min)}"></label><label class="field"><span>Distance (optional)</span><input type="text" id="l-dist" data-l="dist" value="${esc(L.dist)}" placeholder="${w.sp==='swim'?'2000 '+p.pool:'6.2 '+p.units}"></label></div>
       <span class="label">How hard did it feel? (1 easy – 10 max)</span><div class="chips">${[1,2,3,4,5,6,7,8,9,10].map(n=>chip(n,'rpe','data-v="'+n+'"',L.rpe===n)).join('')}</div>
@@ -1132,12 +1148,15 @@ function act(a,el){const D=ui.draft,v=el.dataset.v;
       let msg='Workout logged';
       if(L.trk){S.log[w.id].trk=L.trk;if(L.fresh){const nb=newBests(L.trk);recordBests(w.id,L.trk,today());if(nb.some(b=>b.was))msg='Logged · new personal best'}}
       if(L.usePB&&L.pbOffer){const f=S.profile.fit;f.runD=String(L.pbOffer.L);f.runT=fmtT(L.pbOffer.sec);stampFit(S.profile,{run:1});S.profile.vAdj=0;S.profile.vAdjPrev=null;derive(S.profile);msg='Run paces updated from your '+beName('run',L.pbOffer.L)}
+      else if(L.paceDir){const p=S.profile,a=paceAdjFor(L,p,L.paceDir);p.vAdjPrev=p.vAdj||0;p.vAdj=Math.round(((p.vAdj||0)+a)*10)/10;S.log[w.id].prUsed=true;derive(p);msg='Logged · run paces '+(a>0?'faster':'slower')+' from your next workout'}
       if(L.fresh&&L.trk&&cfg.stravaAuto&&canExport(w.id)&&stravaInfo().connected)setTimeout(()=>stravaSend(w.id),300);
       if(w.k==='test'&&L.result){const f=S.profile.fit,o=JSON.parse(JSON.stringify(f));if(w.sp==='swim'&&parseT(L.result)){f.swimD='400';f.swimT=L.result;S.profile.cssAdj=0;msg='Swim paces updated'}if(w.sp==='run'&&parseT(L.result)){f.runD='5000';f.runT=L.result;S.profile.vAdj=0;S.profile.vAdjPrev=null;msg='Run paces updated'}if(w.sp==='bike'&&parseFloat(L.result)){f.ftp=String(Math.round(parseFloat(L.result)*.95));msg='FTP set to '+f.ftp+' W'}stampFit(S.profile,fitChanged(f,o));derive(S.profile)}
       ui.logging=null;save();toast(msg);break}
     case'skip':S.log[ui.sheet]={s:'skip',at:today()};save();break;
     case'unlog':delete S.log[ui.sheet];dropBests(ui.sheet);save();break;
     case'usePB':ui.logging.usePB=!ui.logging.usePB;break;
+    case'paceDir':ui.logging.paceDir=+v;break;
+    case'piLater':{Object.values(S.log).forEach(l=>{if(l.pr)l.prUsed=true});save();break}
     case'gpx':{const{w,wk}=findW(ui.sheet);let r='none';try{r=Android.exportTrack(w.id,describe(w,wk,S.profile).title,w.sp==='bike'||w.sp==='brick'?'bike':'run')}catch(e){}if(r!=='ok')toast('No GPS track saved for this workout');break}
     case'stravaSend':stravaSend(ui.sheet);break;
     case'stravaSave':{const id=($('#sv-id')||{}).value||'',sec=($('#sv-sec')||{}).value||'';if(!/^\d+$/.test(id.trim())){toast('The Client ID is a number, e.g. 123456');break}
