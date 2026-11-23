@@ -334,27 +334,43 @@ function racePred(p){const R=RACES[p.race],k=R.tier,legs=[];let total=0;
    Run: share of race time cut (an intermediate runner 27 weeks out: about 14%, in line with Runna's forecasts).
    Bike: share of power gained. Swim: share of threshold pace cut.
    Missed sessions so far shrink the gain already banked; the weeks still ahead assume you train as planned.
-   Paces for workouts stay at today's fitness. */
+   Workout paces follow the same curve a week at a time (fitAt), so they get a little faster every week; a test, race
+   result or pace update re-measures your fitness and the curve starts again from there. */
 const GAIN_CAP={run:[.22,.17,.10],bike:[.20,.15,.08],swim:[.15,.10,.05]},GAIN_TAU=16;
 /* the VDOT whose race times are f times today's (f < 1 is faster) */
 function vdotFor(vd,f){const T=predict(vd,10000)*f;let lo=vd,hi=85;for(let i=0;i<30;i++){const m=(lo+hi)/2;if(predict(m,10000)>T)lo=m;else hi=m}return(lo+hi)/2}
-function fitForecast(p){const R=RACES[p.race],pl=S.plan;if(!pl)return null;
-  const end=p.raceDate,t=today(),out={};
-  SPORTS(p).forEach(sp=>{const base=[(p.fitAt||{})[sp]||pl.start,pl.start].sort().pop(),W=Math.max(0,dayDiff(base,end)/7),past=clamp(dayDiff(base,t)/7,0,W);
-    let due=0,done=0;pl.weeks.forEach((wk,i)=>wk.w.forEach(w=>{if(w.sp!==sp&&!(w.sp==='brick'&&sp!=='swim'))return;const d=w.date||addDays(wkStart(i),w.d);
-      if(d>=base&&d<t){due++;const l=S.log[w.id];if(l&&l.s==='done')done++}}));
-    const adh=due>=4?clamp(done/due,0,1):1,frac=W?past/W:0;
-    out[sp]=GAIN_CAP[sp][SL(p,sp)]*(1-Math.exp(-W/GAIN_TAU))*(frac*adh+(1-frac));out[sp+'Adh']=due>=4?adh:null});
-  const g=sp=>out[sp]||0,q=Object.assign({},p);
-  q.vdot=g('run')?clamp(vdotFor(p.vdot,1-g('run')),18,85):p.vdot;q.css=p.css*(1-g('swim'));q.kph=p.kph*Math.cbrt(1+g('bike'));if(p.ftp)q.ftp=p.ftp*(1+g('bike'));
-  const now=racePred(p),fut=racePred(q),weeks=Math.max(0,Math.round(dayDiff(t,end)/7));
+/* share gained in one sport by date d: the curve from the last fitness update to race day, with weeks already past scaled by the share of sessions done */
+function gainAt(p,sp,d){const pl=S.plan;if(!pl)return{g:0,adh:null};const t=today(),base=[(p.fitAt||{})[sp]||pl.start,pl.start].sort().pop();
+  const W=Math.max(0,dayDiff(base,p.raceDate)/7),T=clamp(dayDiff(base,d)/7,0,W),past=clamp(dayDiff(base,t)/7,0,T);
+  let due=0,done=0;pl.weeks.forEach((wk,i)=>wk.w.forEach(w=>{if(w.sp!==sp&&!(w.sp==='brick'&&sp!=='swim'))return;const x=w.date||addDays(wkStart(i),w.d);
+    if(x>=base&&x<t){due++;const l=S.log[w.id];if(l&&l.s==='done')done++}}));
+  const adh=due>=4?clamp(done/due,0,1):1,frac=T?past/T:0;
+  return{g:GAIN_CAP[sp][SL(p,sp)]*(1-Math.exp(-T/GAIN_TAU))*(frac*adh+(1-frac)),adh:due>=4?adh:null}}
+/* the athlete as the plan expects them to be on date d (a copy; .base is the measured fitness it grew from) */
+function fitAt(p,d){if(p.base)p=p.base;if(!S.plan)return p;const SP=SPORTS(p),g=sp=>SP.includes(sp)?gainAt(p,sp,d).g:0,gr=g('run'),gs=g('swim'),gb=g('bike'),q=Object.assign({},p,{base:p});
+  if(gr)q.vdot=clamp(vdotFor(p.vdot,1-gr),18,85);q.css=p.css*(1-gs);q.kph=p.kph*Math.cbrt(1+gb);if(p.ftp&&gb)q.ftp=p.ftp*(1+gb);return q}
+function fitForecast(p){if(p.base)p=p.base;if(!S.plan)return null;const end=p.raceDate,out={};
+  SPORTS(p).forEach(sp=>{const r=gainAt(p,sp,end);out[sp]=r.g;out[sp+'Adh']=r.adh});
+  const q=fitAt(p,end),now=racePred(fitAt(p,monday(today()))),fut=racePred(q),weeks=Math.max(0,Math.round(dayDiff(today(),end)/7));
   return{now,fut,q,gain:out,weeks,adh:Math.min(...SPORTS(p).map(sp=>out[sp+'Adh']??1))}}
+/* Time to a goal race time, in weeks of steady training.
+   First 26 weeks: the same curve as the race-day forecast for your level (a training block's quick early gains).
+   After that, fitness (VDOT) keeps closing the gap to a ceiling C more slowly, about 26% of the gap a year:
+   V(t) = C − (C − V26)·e^(−0.006·(t − 26)). C, about 60 (a 5K near 17:40), is roughly where well-trained amateur runners
+   level off. So a 2:00 half-marathoner at intermediate level needs a bit over 2 years for 1:30. Infinity: beyond C. */
+const TTG_A=.006;
+function ttgCurve(p,v0){const cap=GAIN_CAP.run[SL(p,'run')],early=t=>vdotFor(v0,1-cap*(1-Math.exp(-t/GAIN_TAU))),v26=early(26),C=Math.max(60,v0+8,v26+2);
+  return{C,v26,cap,at:t=>t<=26?early(t):C-(C-v26)*Math.exp(-TTG_A*(t-26))}}
+function weeksToGoal(p,m,cur,goal){const v0=vdot(m,cur),v1=vdot(m,goal);if(v1<=v0)return 0;const c=ttgCurve(p,v0);if(v1>=c.C-.5)return Infinity;
+  if(v1<=c.v26){const cut=1-predict(v1,10000)/predict(v0,10000);return-GAIN_TAU*Math.log(1-cut/c.cap)}
+  return 26+Math.log((c.C-c.v26)/(c.C-v1))/TTG_A}
+const vdotAfter=(p,v0,t)=>ttgCurve(p,v0).at(t);
 /* "3:47 – 3:56": the likely spread around a forecast, about 2% faster to 1.7% slower, rounded to whole minutes over an hour */
 function timeRange(sec){const r=sec>=3600?60:10,lo=Math.round(sec*.98/r)*r,hi=Math.round(sec*1.017/r)*r;return fmtT(lo)+' – '+fmtT(hi)}
 /* "−3m 45s" / "−1h 2m" */
 function fmtGain(sec){sec=Math.round(sec);const h=Math.floor(sec/3600),m=Math.floor(sec%3600/60),s=sec%60;return'−'+(h?h+'h '+m+'m':m?m+'m '+s+'s':s+'s')}
 /* the time to show for race day: the forecast when there is a plan, otherwise today's fitness */
-const raceTime=p=>{const f=fitForecast(p);return f?f.fut:racePred(p)};
+const raceTime=p=>{if(p.base)return racePred(p);const f=fitForecast(p);return f?f.fut:racePred(p)};
 
 /* ---------- plan engine ---------- */
 function buildPlan(p){
@@ -544,7 +560,9 @@ const BODY={
   base:[['Bodyweight squat','3 × 15'],['Single-leg hip hinge','3 × 8 each side'],['Reverse lunge','3 × 10 each side'],['Push-up','3 × 8–12'],['Glute bridge, single leg','3 × 10 each side'],['Plank','3 × 40 s'],['Side plank','2 × 30 s each side'],['Calf raise on a step','3 × 15']],
   build:[['Split squat, slow lowering','2 × 8 each side'],['Single-leg glute bridge','2 × 12 each side'],['Push-up','2 × 10'],['Dead bug','2 × 10 each side'],['Side plank with leg lift','2 × 8 each side'],['Single-leg calf raise','2 × 12 each side']]};
 /* a hot day slows run targets for that one workout */
-const heatP=w=>w.heat?Object.assign({},S.profile,{vdot:S.profile.vdot*(1-w.heat)}):S.profile;
+/* the profile a workout is described with: the fitness the plan expects that week (paces step up weekly), slowed for heat if set */
+const wDate=w=>{if(w.date)return w.date;const f=findW(w.id);return f&&f.i>=0?addDays(wkStart(f.i),w.d):today()};
+const heatP=w=>{const q=fitAt(S.profile,monday(wDate(w)));return w.heat?Object.assign({},q,{vdot:q.vdot*(1-w.heat)}):q};
 function describe(w,wk,p){
   if(w.q){const r=quickPlan(w.q,p);return{title:r.title||'Workout',why:r.why||'',steps:r.steps||[]}}
   if(wk.ph==='recover'&&w.sp!=='strength'){const r=describe(w,Object.assign({},wk,{ph:'base'}),p); // the easy base-phase session, no strides
@@ -715,7 +733,7 @@ function newDraft(){const t=today(),start=dow(t)===0?t:addDays(monday(t),7);
 
 /* ---------- views ---------- */
 const chip=(label,act,attrs,on)=>`<button class="chip" data-act="${act}" ${attrs} aria-pressed="${on}">${label}</button>`;
-function woCard(w,wk){const p=S.profile,d=describe(w,wk,p),lg=S.log[w.id],dist=estDist(w,d,p);
+function woCard(w,wk){const p=heatP(w),d=describe(w,wk,p),lg=S.log[w.id],dist=estDist(w,d,p);
   const label=w.sp==='brick'?'Brick':w.sp==='race'?(w.k==='prac'?'Practice race':'Race day'):w.sp[0].toUpperCase()+w.sp.slice(1);
   return`<button class="wo c-${w.sp}${lg&&lg.s==='skip'?' is-skip':''}" data-act="open" data-id="${w.id}"><span class="bar c-${w.sp}"></span><span class="body"><span class="sp">${label} · ${wDur(w)}${dist?' · '+dist:''}</span><h3>${esc(d.title)}</h3><span class="muted small">${esc(summary(d,p))}</span></span>${lg?`<span class="tick ${lg.s}">${lg.s==='done'?'Done':'Skipped'}</span>`:''}</button>`}
 function summary(d,p){const rep=d.steps.find(s=>s.rep);if(rep){const a=rep.of[0],t=target(a.z,p);return rep.rep+' × '+(a.km?fmtRun(a.km,p):fmtStep(a.min))+' '+a.n.toLowerCase()+(t?' @ '+t.text:'')}
@@ -772,7 +790,21 @@ function viewPlan(){const p=S.profile,pl=S.plan,n=pl.weeks.length,cw=curWeek();c
     if(open===i){h+=`<div class="inner">`;for(let d=0;d<7;d++){const l=wk.w.filter(w=>w.d===d);if(!l.length)continue;h+=`<div class="dayrow"><span class="label" style="padding-top:7px">${DN[d]}</span><div>${l.map(w=>{const ds=describe(w,wk,p),lg=S.log[w.id];return`<button class="mini c-${w.sp}" data-act="open" data-id="${w.id}"><i></i><span class="grow">${esc(ds.title)}</span><span class="muted small num">${lg?(lg.s==='done'?'✓ ':'– '):''}${wDur(w)}</span></button>`}).join('')}</div></div>`}h+=`</div>`}
     h+=`</div>`});
   return h}
-function viewPaces(){const p=S.profile,u=KM(p),R=RACES[p.race],F=fitForecast(p),r=F?F.fut:racePred(p),ahead=F&&F.now.total-F.fut.total>=30;
+/* the time-to-goal answer, redrawn on each keystroke without re-rendering the inputs */
+function ttgOut(){const G=ui.ttg,p=fitAt(S.profile,monday(today())),m=G.m;
+  const sec=s=>{let x=parseT(s);if(x>0&&m/x>6.5)x*=60;return x}; // "2:00" for a half means 2 hours, not 2 minutes
+  const cur=sec(G.cur)||predict(p.vdot,m),goal=sec(G.goal);
+  if(!goal)return`<p class="muted small">Enter a goal time. Current time starts at what your fitness predicts today; type a recent race time to use that instead.</p>`;
+  if(goal>=cur)return`<p><strong>You're already there.</strong> <span class="muted">Your current fitness is good for about ${fmtT(cur)}.</span></p>`;
+  const wk=weeksToGoal(p,m,cur,goal);
+  if(!isFinite(wk))return`<p><strong>Beyond what steady training can promise.</strong> <span class="muted">${fmtT(goal)} is around the level where most well-trained amateur runners level off. Set a stepping-stone goal first and re-check after each race.</span></p>`;
+  const span=w=>w<9?Math.max(1,Math.round(w))+' week'+(Math.round(w)>1?'s':''):w<100?Math.round(w/4.345)+' months':String(+(w/52.18).toFixed(1))+' years';
+  const v0=vdot(m,cur),ms=[12,26,52,104,156].filter(x=>x<wk*.95).map(x=>[x,predict(vdotAfter(p,v0,x),m)]);
+  return`<span class="label">Estimated time</span><div class="row"><span class="num" style="font-size:1.6rem">${span(wk)}</span><span class="muted small">likely ${span(wk*.75)} to ${span(wk*1.4)}</span></div>
+    <p class="small">${fmtT(cur)} → ${fmtT(goal)}: ${Math.round((1-goal/cur)*100)}% faster.</p>
+    ${ms.length?`<table><tr><th>Along the way</th><th class="r">Likely time</th></tr>${ms.map(([x,t])=>`<tr><td>After ${span(x)}</td><td class="r num">${fmtT(t)}</td></tr>`).join('')}</table>`:''}
+    <p class="muted small">Assumes 4 or more runs a week with few breaks, mostly easy running plus one or two quality sessions. Gains come fastest at first and slow as you get fitter. Age, injuries and time off all move this, so re-check after each race.</p>`}
+function viewPaces(){const p0=S.profile,p=fitAt(p0,monday(today())),u=KM(p),R=RACES[p.race],F=fitForecast(p0),r=F?F.fut:racePred(p0),ahead=F&&F.now.total-F.fut.total>=30;
   const SP=SPORTS(p),runOnly=R.legs.length===1&&R.legs[0].sp==='run';
   const why=!F?'':F.weeks>0?(F.adh<.8?` You've done ${Math.round(F.adh*100)}% of your sessions so far, which trims the gain; workouts you don't log count as missed.`:''):' Your training is done: this is what it built.';
   const cell=(now,fut)=>`<td class="r num">${fmtT(now)}</td><td class="r"><span class="num" style="font-size:1.1rem">${fmtT(fut)}</span>${now-fut>=1?`<br><span class="small num" style="color:var(--ok)">${fmtGain(now-fut)}</span>`:''}</td>`;
@@ -783,17 +815,25 @@ function viewPaces(){const p=S.profile,u=KM(p),R=RACES[p.race],F=fitForecast(p),
     ${ahead?`<table><tr><th></th><th class="r">Current</th><th class="r">${F.weeks?'In '+F.weeks+' week'+(F.weeks>1?'s':''):'Race day'}</th></tr>
       ${runOnly?'':`<tr><td><strong>${esc(R.name)}</strong></td>${cell(F.now.total,F.fut.total)}</tr>`}
       ${SP.includes('run')?DIST.map(([m,l])=>`<tr><td>${Math.abs(m-raceM)<1?'<strong>'+l+'</strong>':l}</td>${cell(predict(p.vdot,m),predict(F.q.vdot,m))}</tr>`).join(''):''}</table>`:''}
-    <p class="muted small">${ahead?`If you keep training as planned, on a flat course in mild conditions.${why} Run times are stand-alone races. Workout paces stay at your current fitness and step up when a test, race result or pace update shows you are fitter.`:`${esc(R.name)} estimate on a flat course in mild conditions.${why} It moves as your fitness updates.`}</p></div>`;
+    <p class="muted small">${ahead?`If you keep training as planned, on a flat course in mild conditions.${why} Run times are stand-alone races. "Current" includes the fitness your training has built so far. Workout paces step up a little every week along this curve; a test, race result or pace update re-measures you and the curve carries on from there.`:`${esc(R.name)} estimate on a flat course in mild conditions.${why} It moves as your fitness updates.`}</p></div>`;
   if(SP.includes('swim'))h+=`<div class="panel"><div class="row"><h2 class="grow" style="color:var(--swim)">Swim</h2>${p.est.swim?'<span class="pill">Estimated from level</span>':''}</div><table><tr><th>Zone</th><th class="r">Pace /100 ${p.pool}</th></tr>${['s.easy','s.steady','s.css','s.fast','s.race'].map(z=>{const t=target(z,p);return`<tr><td>${t.name}</td><td class="r">${t.text.replace(/ \/.*/,'')}</td></tr>`}).join('')}</table>
     <p class="muted small">Equivalent times: ${[100,400,p.pool==='yd'?1650:1500].map(d=>d+' '+p.pool+' '+fmtT(p.css/(SWIM_FAC[d])*d/100)).join(' · ')}</p></div>`;
   let mode=p.bikeMode;const note=mode==='power'&&!p.ftp?'Add your FTP to see watt targets. Showing effort for now.':(mode==='hr'||mode==='mix')&&!p.lthr?'Add your threshold or max heart rate to see bpm targets. Showing '+(mode==='mix'?'effort for easy rides':'effort')+' for now.':mode==='speed'?'Flat-road speeds in calm air, scaled from your steady 1-hour speed. On hills or in wind, hold the effort, not the number.':'';
   if(SP.includes('bike'))h+=`<div class="panel"><div class="row"><h2 class="grow" style="color:var(--bike)">Bike</h2>${p.est.bike?'<span class="pill">Speed estimated</span>':''}</div><div class="chips">${chip('Power','mode','data-v="power"',mode==='power')}${chip('Heart rate','mode','data-v="hr"',mode==='hr')}${chip('Speed','mode','data-v="speed"',mode==='speed')}${chip('Mixed','mode','data-v="mix"',mode==='mix')}${chip('Feel','mode','data-v="rpe"',mode==='rpe')}</div>${mode==='mix'?`<p class="muted small">Recovery and endurance rides by heart rate; tempo and harder by ${p.ftp?'power':'speed'}.</p>`:''}${note?`<p class="small" style="color:var(--warn)">${note}</p>`:''}<table><tr><th>Zone</th><th class="r">Target</th></tr>${['b.rec','b.end','b.tempo','b.ss','b.thr','b.vo2','b.race'].map(z=>{const t=target(z,p);return`<tr><td>${t.name}</td><td class="r">${t.text}</td></tr>`}).join('')}</table>
     <p class="muted small">${p.ftp?'FTP '+p.ftp+' W · ':''}${p.lthr?'Threshold HR '+p.lthr+' bpm · ':''}Steady speed ${(p.kph/u).toFixed(1)} ${p.units}/h</p></div>`;
   if(SP.includes('run'))h+=`<div class="panel"><div class="row"><h2 class="grow" style="color:var(--run)">Run</h2>${p.est.run?'<span class="pill">Estimated from level</span>':''}</div><table><tr><th>Zone</th><th class="r">${p.runMode==='hr'||p.runMode==='mix'?'Target':'Pace /'+p.units}</th></tr>${['r.easy','r.steady','r.thr','r.int','r.race'].map(z=>{const t=target(z,p);return`<tr><td>${t.name}${z==='r.race'&&SP.includes('bike')?' (off the bike)':''}</td><td class="r">${t.text.replace(/ \/.*/,'')}</td></tr>`}).join('')}</table>
-    <p class="muted small">Stand-alone race equivalents: ${[[1609.344,'1 mile'],[5000,'5K'],[10000,'10K'],[21097.5,'Half'],[42195,'Marathon']].map(a=>a[1]+' '+fmtT(predict(p.vdot,a[0]))).join(' · ')}</p></div>`;
+    <p class="muted small">This week's paces. Stand-alone race equivalents: ${[[1609.344,'1 mile'],[5000,'5K'],[10000,'10K'],[21097.5,'Half'],[42195,'Marathon']].map(a=>a[1]+' '+fmtT(predict(p.vdot,a[0]))).join(' · ')}</p>
+    ${(()=>{const ks=['r.easy','r.thr'].filter(k=>!useHr(k,p));if(!F||F.q.vdot-p.vdot<.2||p.runMode==='rpe'||!ks.length)return'';
+      return`<p class="small"><strong>Getting faster:</strong> your paces step up a little each week. By race week, ${ks.map(k=>RZ[k][0].toLowerCase()+' is <span class="num">'+target(k,F.q).text+'</span>').join(' and ')}.</p>`})()}</div>`;
   if(SP.includes('run')){const pi=paceInsight();
     h+=`<div class="panel"><h2>Pace insights</h2><p><strong>${pi.title}</strong><br><span class="muted">${pi.text}</span></p>${pi.adj?`<button class="btn block" data-act="piAccept">Update my run paces</button>`:''}${p.vAdjPrev!=null?`<button class="btn line block" data-act="piRevert">Undo the last pace change</button>`:''}
       <span class="label">Fine-tune by hand</span><div class="row"><span class="grow">Run paces</span><button class="chip" data-act="tune" data-k="run" data-n="-0.5">Slower</button><button class="chip" data-act="tune" data-k="run" data-n="0.5">Faster</button></div>${SP.includes('swim')?`<div class="row"><span class="grow">Swim paces</span><button class="chip" data-act="tune" data-k="swim" data-n="1">Slower</button><button class="chip" data-act="tune" data-k="swim" data-n="-1">Faster</button></div>`:''}</div>`}
+  if(SP.includes('run')){if(!ui.ttg){const d=DIST.find(d=>Math.abs(d[0]-raceM)<1);ui.ttg={m:d?d[0]:21097.5,cur:'',goal:''}}const G=ui.ttg;
+    h+=`<div class="panel"><h2>Time to goal</h2><p class="muted small">How long steady training might take you to reach a race time.</p>
+      <div class="chips">${DIST.map(([m,l])=>chip(l,'ttgD','data-m="'+m+'"',G.m===m)).join('')}</div>
+      <div class="row"><label class="field grow"><span>Current time</span><input type="text" inputmode="numeric" data-time="1" data-g="cur" value="${esc(G.cur)}" placeholder="${fmtT(predict(p.vdot,G.m))}"></label>
+      <label class="field grow"><span>Goal time</span><input type="text" inputmode="numeric" data-time="1" data-g="goal" value="${esc(G.goal)}" placeholder="e.g. ${fmtT(Math.round(predict(p.vdot,G.m)*.9/60)*60)}"></label></div>
+      <div id="ttg-out">${ttgOut()}</div></div>`}
   h+=`<button class="btn block" data-act="editFit">Update my fitness</button><p class="muted small">Enter a new race result or test at any time. Every future workout re-targets instantly. Recovery weeks also include a time trial that updates these for you.</p>`;
   return h}
 function viewProgress(){const pl=S.plan,cw=curWeek(),n=pl.weeks.length,t=today();let due=0,done=0,skip=0,mins=0;const by={swim:0,bike:0,run:0,strength:0},plan={swim:0,bike:0,run:0,strength:0};
@@ -829,7 +869,7 @@ function fitBytes(msgs){const d=[],le=(v,n)=>{for(let i=0;i<n;i++)d.push(Math.fl
   const hc=fitCrc(h);h.push(hc&255,hc>>8);const all=h.concat(d),c=fitCrc(all);all.push(c&255,c>>8);return new Uint8Array(all)}
 /* the watch's target for one step: [targetType, low, high] in FIT units (speed m/s ×1000, bpm +100, watts +1000), or open */
 function fitTarget(s,p){const z=s.z,OPEN=[2,0,0];
-  if(!z||z==='r.tt'||z==='b.tt'||z==='r.rep'||s.n.startsWith('Uphill'))return OPEN;
+  if(!z||z==='r.tt'||z==='b.tt'||z==='r.rep'||z==='r.easy'||s.n.startsWith('Uphill'))return OPEN; // easy runs: no watch alerts
   if(useHr(z,p)){const r=hrRange(z,p);return r?[1,r[0]+100,r[1]+100]:OPEN}
   if(z[0]==='r'){if(p.runMode==='rpe')return OPEN;let lo,hi;
     if(z==='r.race'){const v=1000/runSecPerKm(p,z);lo=v*.985;hi=v*1.015}else if(RZ[z]){lo=vAt(p.vdot,z==='r.easy'?.5:RZ[z][1])/60;hi=vAt(p.vdot,RZ[z][2])/60}else return OPEN;
@@ -1145,6 +1185,7 @@ function act(a,el){const D=ui.draft,v=el.dataset.v;
     case'heat':{const{w}=findW(ui.sheet);w.heat=+v||0;save();break}
     case'tune':{const p=S.profile;if(el.dataset.k==='run')p.vAdj=Math.round(((p.vAdj||0)+ +el.dataset.n)*10)/10;else p.cssAdj=(p.cssAdj||0)+ +el.dataset.n;derive(p);save();break}
     case'piAccept':{const p=S.profile,pi=paceInsight();if(pi.adj){p.vAdjPrev=p.vAdj||0;p.vAdj=Math.round(((p.vAdj||0)+pi.adj)*10)/10;Object.values(S.log).forEach(l=>{if(l.pr)l.prUsed=true});derive(p);save();toast('Run paces updated')}break}
+    case'ttgD':{const m=+el.dataset.m;if(ui.ttg.m!==m)ui.ttg={m,cur:'',goal:''};break}
     case'piRevert':{const p=S.profile;p.vAdj=p.vAdjPrev||0;p.vAdjPrev=null;derive(p);save();toast('Pace change undone');break}
     case'runMode':S.profile.runMode=v;save();break;
     case'livePause':Android.pause();break;
@@ -1192,7 +1233,7 @@ document.addEventListener('click',e=>{const el=e.target.closest('[data-act]');if
 document.addEventListener('input',e=>{const t=e.target;
   // quick workout amount: refresh only the preview so the keyboard stays open
   if(t.dataset.q&&ui.quick){const Q=ui.quick;Q.amt=t.value;Q.auto=false;Q.reps=null;Q.err='';const pv=$('#q-prev');if(pv)pv.innerHTML=quickPrev();return}
-  if(t.dataset.time)fmtTimeInput(t);if(t.dataset.c){cfg[t.dataset.c]=t.value.trim();lsSet('tripace.coach',cfg);return}if(t.dataset.f&&ui.draft){setPath(ui.draft,t.dataset.f,t.value);if(t.dataset.re&&t.value)render()}else if(t.dataset.l&&ui.logging)ui.logging[t.dataset.l]=t.value});
+  if(t.dataset.time)fmtTimeInput(t);if(t.dataset.g&&ui.ttg){ui.ttg[t.dataset.g]=t.value;const o=$('#ttg-out');if(o)o.innerHTML=ttgOut();return}if(t.dataset.c){cfg[t.dataset.c]=t.value.trim();lsSet('tripace.coach',cfg);return}if(t.dataset.f&&ui.draft){setPath(ui.draft,t.dataset.f,t.value);if(t.dataset.re&&t.value)render()}else if(t.dataset.l&&ui.logging)ui.logging[t.dataset.l]=t.value});
 /* ---------- Android app only: GPS-guided workouts and a coach on your own LLM ---------- */
 const NATIVE=!!window.Android;
 const lsGet=(k,d)=>{try{const v=localStorage.getItem(k);return v?(JSON.parse(v)??d):d}catch(e){return d}};
@@ -1208,12 +1249,12 @@ function flatSteps(d,p,indoor){const out=[];
     if(!s.min&&!s.km){if(s.n==='Transition')out.push({name:'Transition',sp:'r',sec:180,m:0,lo:0,hi:0,target:s.note,say:'Transition. Rack the bike and get your run shoes on.'});return}
     const t=target(s.z,p),sp=s.z[0]==='r'?'r':'b';let lo=0,hi=0;
     if(s.z==='r.race'){const v=1000/runSecPerKm(p,s.z);lo=v*.985;hi=v*1.015}
-    else if(RZ[s.z]){lo=vAt(p.vdot,RZ[s.z][1])/60;hi=vAt(p.vdot,RZ[s.z][2])/60;if(s.z==='r.easy')lo=0;if(s.z==='r.rep'){lo=0;hi=0}}
+    else if(RZ[s.z]){lo=vAt(p.vdot,RZ[s.z][1])/60;hi=vAt(p.vdot,RZ[s.z][2])/60;if(s.z==='r.easy'||s.z==='r.rep'){lo=0;hi=0}} // easy runs are run by feel: no speed up / slow down
     else if(sp==='b'&&(p.bikeMode==='speed'||(p.bikeMode==='mix'&&!p.ftp))&&s.z!=='b.tt'){const a=bzone(s.z,p);lo=s.z==='b.rec'?0:bikeMs(p,a[1]);hi=bikeMs(p,a[2])}
     if(s.n.startsWith('Uphill')){lo=0;hi=0} // pace means little on a hill: run these by effort
     // heart-rate steps: alerts use bpm instead of pace or speed; easy steps have no lower bound
     // steps under 4 minutes (interval recoveries, short reps) are too short for heart rate to settle, so they get no bpm alerts
-    let hrLo=0,hrHi=0;if(useHr(s.z,p)){const r=hrRange(s.z,p);if(r&&!(s.min&&s.min<4)){hrHi=r[1];hrLo=s.z==='r.easy'||s.z==='b.rec'||s.z==='b.end'?0:r[0]}if(r){lo=0;hi=0}}
+    let hrLo=0,hrHi=0;if(useHr(s.z,p)){const r=hrRange(s.z,p);if(r&&!(s.min&&s.min<4)&&s.z!=='r.easy'){hrHi=r[1];hrLo=s.z==='r.easy'||s.z==='b.rec'||s.z==='b.end'?0:r[0]}if(r){lo=0;hi=0}}
     const nm=s.n+(n?' '+i+' of '+n:''),byM=s.km&&!indoor,sec=s.min?Math.round(s.min*60):s.km?Math.round(s.km*runSecPerKm(p,'r.tt')):0;
     const dsay=s.km?(s.z==='r.tt'?'5 kilometres':sayRun(s.km,p)):'';
     out.push({name:nm,sp,z:s.z,w:0,sec,m:byM?Math.round(s.km*1000):0,lo,hi,hrLo,hrHi,target:t?t.name+' · '+t.text:'',dsay:byM?dsay:'',
