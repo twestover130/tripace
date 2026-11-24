@@ -735,7 +735,7 @@ function newDraft(){const t=today(),start=dow(t)===0?t:addDays(monday(t),7);
 const chip=(label,act,attrs,on)=>`<button class="chip" data-act="${act}" ${attrs} aria-pressed="${on}">${label}</button>`;
 function woCard(w,wk){const p=heatP(w),d=describe(w,wk,p),lg=S.log[w.id],dist=estDist(w,d,p);
   const label=w.sp==='brick'?'Brick':w.sp==='race'?(w.k==='prac'?'Practice race':'Race day'):w.sp[0].toUpperCase()+w.sp.slice(1);
-  return`<button class="wo c-${w.sp}${lg&&lg.s==='skip'?' is-skip':''}" data-act="open" data-id="${w.id}"><span class="bar c-${w.sp}"></span><span class="body"><span class="sp">${label} · ${wDur(w)}${dist?' · '+dist:''}</span><h3>${esc(d.title)}</h3><span class="muted small">${esc(summary(d,p))}</span></span>${lg?`<span class="tick ${lg.s}">${lg.s==='done'?'Done':'Skipped'}</span>`:''}</button>`}
+  return`<button class="wo c-${w.sp}${lg&&lg.s==='skip'?' is-skip':''}" data-act="open" data-id="${w.id}"><span class="bar c-${w.sp}"></span><span class="body"><span class="sp">${label} · ${wDur(w)}${dist?' · '+dist:''}${routeOf(w)&&!lg?' · Route':''}</span><h3>${esc(d.title)}</h3><span class="muted small">${esc(summary(d,p))}</span></span>${lg?`<span class="tick ${lg.s}">${lg.s==='done'?'Done':'Skipped'}</span>`:''}</button>`}
 function summary(d,p){const rep=d.steps.find(s=>s.rep);if(rep){const a=rep.of[0],t=target(a.z,p);return rep.rep+' × '+(a.km?fmtRun(a.km,p):fmtStep(a.min))+' '+a.n.toLowerCase()+(t?' @ '+t.text:'')}
   const main=d.steps.find(s=>s.reps>1&&s.z&&s.z!=='s.easy')||d.steps.find(s=>s.z&&s.n!=='Warm up')||d.steps[1]||d.steps[0];if(!main)return'';
   if(main.dist){const t=target(main.z,p);return(main.reps>1?main.reps+' × ':'')+main.dist+' '+p.pool+(t?' @ '+t.text:'')}
@@ -747,6 +747,10 @@ function viewToday(){const p=S.profile,pl=S.plan,n=pl.weeks.length,t=today();let
   const dd=dayDiff(ws,day);const list=wk.w.filter(w=>w.d===dd),solo=(S.solo||[]).filter(w=>w.date===day);
   const bigNum=toRace<0?'Done':toRace===0?'Go':toRace<21?toRace:Math.ceil(toRace/7),bigLab=toRace<0?'Race complete':toRace===0?'Race day':toRace<21?'days to race':'weeks to race';
   let h=`<div class="bib"><div class="stack" style="gap:4px;min-width:0"><span class="label">${esc(R.name)} · ${fmtDate(p.raceDate)}</span><h1>${esc(p.raceName||R.name)}</h1><span class="small" style="opacity:.8">Week ${clamp(cw+1,1,n)} of ${n} · ${PHASE[pl.weeks[clamp(cw,0,n-1)].ph]}${pl.weeks[clamp(cw,0,n-1)].rec?' · recovery':''}</span></div><div style="text-align:right"><div class="num big">${bigNum}</div><span class="label">${bigLab}</span></div></div>`;
+  // a route just shared or imported: put it on a run or ride this week
+  const NR=ui.newRoute&&S.routes&&S.routes[ui.newRoute];
+  if(NR){const tg=routeTargets(),n=routeTurns(NR);h+=`<div class="panel" style="border:2px solid var(--accent)"><h3>New route: ${esc(NR.name)}</h3><p class="muted small">${fmtDist(NR.d/1000,p)} · ${n?n+' turn'+(n>1?'s':'')+' called out':'no turns'}.${tg.length?' Use it on:':' Open any run or ride and tap Add a route to use it.'}</p>
+    ${tg.map(o=>`<button class="btn line block" data-act="routeUse" data-id="${o.w.id}" style="text-align:left">${o.d===t?'Today':DN[dow(o.d)]} · ${esc(describe(o.w,o.wk,p).title)}${routeOf(o.w)?' <span class="muted">(replaces its route)</span>':''}</button>`).join('')}<button class="btn ghost block" data-act="routeUse" data-id="">Keep it for later</button></div>`}
   const miss=missed();
   if(miss.length>=3)h+=`<div class="panel" style="border:2px solid var(--warn)"><h3>You have missed ${miss.length} workouts this week</h3><p class="muted">Do not try to make them up. Ease back in turns the next five days into easy sessions so you rejoin the plan safely. Carry on leaves the plan as it is.</p><div class="row"><button class="btn grow" data-act="realign" data-v="ease">Ease back in</button><button class="btn ghost grow" data-act="realign" data-v="carry">Carry on</button></div></div>`;
   // every so often: when recent GPS-tracked speed runs say the paces no longer fit, offer the change here too
@@ -971,6 +975,9 @@ function viewSettings(){const p=S.profile,pl=S.plan;
     <span class="label">For how long</span><div class="chips">${[3,5,7,10,14].map(n=>chip(n+' days','adaptSet','data-k="days" data-v="'+n+'"',A.days===n)).join('')}</div>
     <span class="label">What to do</span><div class="chips">${chip('Pause training','adaptSet','data-k="mode" data-v="pause"',A.mode==='pause')}${chip('Easy sessions only','adaptSet','data-k="mode" data-v="easy"',A.mode==='easy')}${chip('Short easy only','adaptSet','data-k="mode" data-v="short"',A.mode==='short')}</div>
     ${A.ask?`<p class="err">This changes your plan for the next ${A.days} days and cannot be undone, except by rebuilding the plan.</p><div class="row"><button class="btn grow" data-act="adaptApply">Adjust my plan</button><button class="btn ghost grow" data-act="adaptSet" data-k="ask" data-v="">Cancel</button></div>`:`<button class="btn line block" data-act="adaptSet" data-k="ask" data-v="1">Adjust my plan</button>`}</div>`;
+  {const RT=Object.values(S.routes||{}).sort((a,b)=>b.t-a.t);
+    h+=`<div class="panel"><h2>Routes</h2>${RT.length?RT.map(r=>`<div class="row"><span class="grow">${esc(r.name)} <span class="muted small">· ${fmtDist(r.d/1000,p)}</span></span><button class="chip" data-act="routeDel" data-v="${r.id}">Delete</button></div>`).join(''):''}
+      <button class="btn line block" data-act="routeImport">Import a GPX file</button><p class="muted small">Share a route from Run Atlas (or any app that makes GPX files) to Tripace Pro, then add it to a run or ride.${navOK()?' Tripace Pro calls out each turn while you go.':''}</p></div>`}
   if(NATIVE&&window.Android&&Android.stravaStatus){const sv=stravaInfo(),dom=sv.domain||'your update site';
     h+=`<div class="panel"><h2>Strava</h2>`;
     if(sv.connected)h+=`<p>Connected${sv.athlete?' as <strong>'+esc(sv.athlete)+'</strong>':''}.</p><span class="label">After you save an outdoor workout</span><div class="chips">${chip('Send it to Strava automatically','stravaAuto','data-v="1"',!!cfg.stravaAuto)}${chip('Only when I tap Send','stravaAuto','data-v="0"',!cfg.stravaAuto)}</div>`
@@ -1077,7 +1084,7 @@ function paceChoice(L){const b=S.profile,pct=L.pr?(L.pr-1)*100:null,dir=L.paceDi
   return`<div class="panel" style="gap:8px"><h3>Your paces from here</h3><p class="small">${msg}</p>
     <div class="chips">${chip('Slower'+(sug<0?' (suggested)':''),'paceDir','data-v="-1"',dir===-1)}${chip('Keep','paceDir','data-v="0"',dir===0)}${chip('Faster'+(sug>0?' (suggested)':''),'paceDir','data-v="1"',dir===1)}</div>${prev}</div>`}
 function viewSheet(){const{wk,i,w}=findW(ui.sheet),p=heatP(w),d=describe(w,wk,p),lg=S.log[w.id],date=w.date||addDays(wkStart(i),w.d),dist=estDist(w,d,p);
-  const route=(ui.logging&&ui.logging.route)||(lg&&lg.route)||null;curRoute=route;
+  const PR=!(lg&&lg.s==='done')&&routeOf(w),route=(ui.logging&&ui.logging.route)||(lg&&lg.route)||(PR?routeShow(PR):null);curRoute=route;
   const label=w.sp==='brick'?'Brick':w.sp==='race'?(w.k==='prac'?'Practice race':'Race day'):w.sp[0].toUpperCase()+w.sp.slice(1);
   let h=`<div class="card c-${w.sp}"><div class="row"><div class="grow stack" style="gap:2px"><span class="label" style="color:var(--c)">${label} · ${fmtDate(date)}${w.date?'':' · Week '+(i+1)}</span><h2>${esc(d.title)}</h2></div><button class="chip" data-act="close" aria-label="Close">✕</button></div>
     <div class="row"><span class="num" style="font-size:1.6rem">${w.k==='prac'?'Rehearsal':w.sp==='race'?fmtT(raceTime(p).total):wDur(w)}</span>${dist?`<span class="muted">${dist}</span>`:''}${lg?`<span class="pill">${lg.s==='done'?'Done':'Skipped'}</span>`:''}</div>${route?routeBlock(route):''}`;
@@ -1101,6 +1108,7 @@ function viewSheet(){const{wk,i,w}=findW(ui.sheet),p=heatP(w),d=describe(w,wk,p)
         :sv.connected?`<button class="btn grow" data-act="stravaSend"${busy?' disabled':''}>${busy?'Sending…':'Send to Strava'}</button>`:''}</div>${!sv.connected&&!lg.strava?`<span class="muted small">To send workouts to Strava automatically, connect it under Settings.</span>`:''}</div>`}
     const hasRun=(w.sp==='run'||w.sp==='brick')&&!(lg&&lg.s==='done')&&!isFree(w.q);
     if(hasRun&&p.runMode!=='rpe')h+=`<div class="stack"><span class="label">Conditions today</span><div class="chips">${chip('Normal','heat','data-v="0"',!w.heat)}${chip(p.units==='mi'?'Warm, 75–84°F':'Warm, 24–29°C','heat','data-v="0.03"',w.heat===0.03)}${chip(p.units==='mi'?'Hot, 85°F+':'Hot, 30°C+','heat','data-v="0.06"',w.heat===0.06)}</div>${w.heat?'<span class="muted small">Run pace targets above are slowed for the heat. Drink early and often.</span>':''}</div>`;
+    if(routeOK(w)&&!(lg&&lg.s==='done'))h+=routePanel(w,p);
     if(NATIVE&&['run','bike','brick'].includes(w.sp)&&!(lg&&lg.s==='done'))h+=w.sp==='run'?`<button class="btn block" data-act="liveStart">Start with GPS</button><button class="btn line block" data-act="liveStartIndoor">Start indoors, timer only</button>`
       :`<div class="stack"><span class="label">Where are you riding?</span><div class="row"><button class="btn grow" data-act="liveStart">Outdoors</button><button class="btn grow" data-act="liveStartTrainer">On the trainer</button></div><span class="muted small">Outdoors tracks with GPS. On the trainer connects to your smart trainer over Bluetooth and sets its resistance to each step's target watts${S.profile.ftp?'':'. Add your FTP under Paces first, or the trainer is read but not controlled'}.</span></div>`;
     if(canGarmin(w)&&!(lg&&lg.s==='done')){const G=ui.garmin&&ui.garmin.id===w.id?ui.garmin:null;
@@ -1138,7 +1146,7 @@ function act(a,el){const D=ui.draft,v=el.dataset.v;
     case'day':ui.day=el.dataset.d;break;
     case'week':{const n=S.plan.weeks.length,cur=ui.day||today(),nd=addDays(cur,7*+el.dataset.n);if(dayDiff(S.plan.start,nd)>=0&&dayDiff(S.plan.start,nd)<n*7)ui.day=nd;break}
     case'toggleWeek':{const i=+el.dataset.i,open=ui.openWeek??clamp(curWeek(),0,S.plan.weeks.length-1);ui.openWeek=open===i?-1:i;break}
-    case'open':ui.sheet=el.dataset.id;ui.logging=null;break;
+    case'open':ui.sheet=el.dataset.id;ui.logging=null;ui.routePick=null;break;
     case'close':ui.sheet=null;ui.logging=null;break;
     case'logStart':{const{w}=findW(ui.sheet),lg=S.log[w.id]||{};ui.logging={min:lg.min||String(w.min+(w.x||0)),dist:lg.dist||'',rpe:lg.rpe||0,note:lg.note||'',result:lg.result||'',route:lg.route,trk:lg.trk,strava:lg.strava};break}
     case'logCancel':ui.logging=null;break;
@@ -1175,6 +1183,13 @@ function act(a,el){const D=ui.draft,v=el.dataset.v;
     case'liveStartIndoor':startLive('indoor');break;
     case'liveStartTrainer':startLive('trainer');break;
     case'liveBias':try{Android.bias(el.dataset.n)}catch(e){}break;
+    case'navEnd':try{Android.navEnd()}catch(e){}toast('Route ended. Your workout carries on.');break;
+    case'routePick':ui.routePick=v?ui.sheet:null;if(v&&!Object.keys(S.routes||{}).length){ui.routePick=null;ui.pickFor=ui.sheet;importRoute()}break;
+    case'routeSet':{const{w}=findW(ui.sheet);w.route=v;ui.routePick=null;save();toast('Route added');break}
+    case'routeOff':{const{w}=findW(ui.sheet);delete w.route;save();break}
+    case'routeImport':ui.pickFor=ui.sheet||null;importRoute();break;
+    case'routeUse':{const id=el.dataset.id;if(id){const{w}=findW(id);if(w){w.route=ui.newRoute;save();ui.sheet=id;ui.logging=null;toast('Route added')}}ui.newRoute=null;break}
+    case'routeDel':delete S.routes[v];save();break;
     case'adaptSet':{const k=el.dataset.k;ui.adapt[k]=k==='days'?+v:k==='ask'?!!v:v;break}
     case'adaptApply':applyAdapt();break;
     case'realign':{const ids=missed();ids.forEach(id=>S.log[id]={s:'skip',at:today()});if(v==='ease')eachPlanned(today(),addDays(today(),4),w=>{soften(w,60,.7)});save();toast(v==='ease'?'Next five days eased':'Missed workouts cleared');break}
@@ -1284,8 +1299,8 @@ function startLive(mode){const trainer=mode==='trainer',indoor=!!mode,{wk,w}=fin
   // on the trainer each bike step carries a watt target, the middle of its power zone; the FTP test is ridden freely
   if(trainer&&p.ftp)steps.forEach(s=>{if(s.sp!=='b'||!s.z||s.z==='b.tt')return;const a=bzone(s.z,p);s.w=Math.round(p.ftp*(a[1]+a[2])/2);
     s.target=a[0]+' · '+s.w+' W';s.say=s.name+'. '+speakDur(s.sec/60)+'. Target '+s.w+' watts.';s.hrLo=0;s.hrHi=0});
-  const hrm=!!cfg.hrm;
-  try{r=Android.start(JSON.stringify({id:w.id,unit:p.units,voice:cfg.voice,gps:!indoor,trainer,hrm,steps}))}catch(e){r='err'}
+  const hrm=!!cfg.hrm,R=!indoor&&navOK()?routeOf(w):null,nav=R?{pts:R.pts,cues:R.cues}:null;
+  try{r=Android.start(JSON.stringify({id:w.id,unit:p.units,voice:cfg.voice,gps:!indoor,trainer,hrm,steps,nav}))}catch(e){r='err'}
   if(r==='perm'){toast(trainer?'Allow Bluetooth access, then tap again':hrm?'Allow the permissions (Nearby devices is for heart rate), then tap Start again':'Allow location access, then tap Start again');return}
   if(r==='btoff'){toast('Turn on Bluetooth first');return}
   if(r==='gpsoff'){toast('Turn on Location in your phone settings first');return}
@@ -1440,6 +1455,96 @@ function placeMap(){const full=!!ui.mapFull;let host=$('#route-slot'),f=$('#mapf
   const m=rmap.map,b=rmap.el.querySelector('button');full?m.dragging.enable():m.dragging.disable();
   b.dataset.act=full?'mapClose':'mapFull';b.textContent=full?'✕ Close':'Expand';
   requestAnimationFrame(()=>{m.invalidateSize();if(rmap&&rmap.full!==full){rmap.full=full;rmap.fit()}})}
+/* ---------- planned routes: GPX files from Run Atlas or any route planner, with turn-by-turn voice directions ----------
+   S.routes[id] = {id, name, d (metres), pts [[lat,lon],...], cues [[segment, fraction, words, 1 turn / 0 named place],...], t}
+   Distances use the same flat local grid as the app's RouteNav, so a cue sits in the same place on both sides. */
+const RKY=111195;
+const navOK=()=>NATIVE&&!!(window.Android&&Android.navEnd);
+const routeOK=w=>!!w&&(w.sp==='run'||w.sp==='bike');
+const routeOf=w=>w&&w.route&&S.routes?S.routes[w.route]||null:null;
+const routeShow=R=>R.show||(R.show=simplifyRoute(R.pts,300));
+const routeTurns=R=>R.cues.filter(c=>c[3]).length;
+function routeCum(pts){const kx=RKY*Math.cos(pts[0][0]*Math.PI/180),c=[0];for(let i=1;i<pts.length;i++)c.push(c[i-1]+Math.hypot((pts[i][1]-pts[i-1][1])*kx,(pts[i][0]-pts[i-1][0])*RKY));return c}
+const brg=(a,b)=>{const r=Math.PI/180,y=Math.sin((b[1]-a[1])*r)*Math.cos(b[0]*r),x=Math.cos(a[0]*r)*Math.sin(b[0]*r)-Math.sin(a[0]*r)*Math.cos(b[0]*r)*Math.cos((b[1]-a[1])*r);return Math.atan2(y,x)/r};
+function parseGpx(text,fname){let doc=null;try{doc=new DOMParser().parseFromString(String(text||''),'application/xml')}catch(e){}
+  if(!doc||doc.getElementsByTagName('parsererror').length||!doc.getElementsByTagNameNS('*','gpx').length)return{err:'That is not a GPX file Tripace Pro can read.'};
+  const tag=n=>[...doc.getElementsByTagNameNS('*',n)],kid=(e,n)=>{const c=[...e.children].find(x=>x.localName===n);return c?c.textContent.trim():''};
+  const pt=e=>{const a=parseFloat(e.getAttribute('lat')),o=parseFloat(e.getAttribute('lon'));return isFinite(a)&&isFinite(o)&&Math.abs(a)<=90&&Math.abs(o)<=180&&(a||o)?[a,o]:null};
+  // a track has the full line; a route's points may be sparse turn points, so it is only used when there is no track
+  let raw=tag('trkpt').map(pt).filter(Boolean);const isRte=raw.length<2;if(isRte)raw=tag('rtept').map(pt).filter(Boolean);
+  if(raw.length<2)return{err:'That GPX file has no route in it.'};
+  const P=[raw[0]];for(const q of raw){const l=P[P.length-1];if(Math.hypot((q[0]-l[0])*RKY,(q[1]-l[1])*RKY*Math.cos(l[0]*Math.PI/180))>=2)P.push(q)}
+  if(P.length<2)return{err:'That route is too short.'};
+  const d=routeCum(P).pop();if(d<200)return{err:'That route is under 200 m long.'};if(d>300000)return{err:'That route is over 300 km long.'};
+  // named points: route-planner turn instructions ("Turn left onto Main St") or places worth a mention ("Water fountain")
+  const named=tag('wpt').concat(tag('rtept')).map(e=>{const q=pt(e),t=(kid(e,'name')||kid(e,'desc')||kid(e,'cmt')).replace(/\s+/g,' ').slice(0,80);return q&&t?[q[0],q[1],t]:null}).filter(Boolean);
+  let name='';for(const n of['metadata','trk','rte']){const e=tag(n)[0];if(e&&kid(e,'name')){name=kid(e,'name');break}}
+  name=(name||String(fname||'').replace(/\.gpx$/i,'').replace(/[_-]+/g,' ').trim()||'Route').slice(0,60);
+  const pts=simplifyRoute(P,1500)||P.map(q=>[+q[0].toFixed(5),+q[1].toFixed(5)]);
+  return{name,pts,cues:routeCues(pts,named)}}
+// nearest place on the route to a point: segment, fraction along it, distance away
+function routeProj(pts,q){const kx=RKY*Math.cos(pts[0][0]*Math.PI/180);let bd=1e18,bi=0,bf=0;
+  for(let i=0;i<pts.length-1;i++){const ax=(pts[i][1]-q[1])*kx,ay=(pts[i][0]-q[0])*RKY,dx=(pts[i+1][1]-pts[i][1])*kx,dy=(pts[i+1][0]-pts[i][0])*RKY,L2=dx*dx+dy*dy,t=L2?clamp(-(ax*dx+ay*dy)/L2,0,1):0,dd=Math.hypot(ax+t*dx,ay+t*dy);if(dd<bd){bd=dd;bi=i;bf=t}}
+  return{i:bi,f:bf,d:bd}}
+const TURNISH=/\b(left|right|turn|straight|continue|keep|u-turn|around|onto|exit|roundabout|bear|merge|cross)\b/i;
+function routeCues(pts,named){const N=pts.length,cum=routeCum(pts),D=cum[N-1];
+  const pAt=x=>{x=clamp(x,0,D);let lo=0,hi=N-1;while(hi-lo>1){const m=(lo+hi)>>1;if(cum[m]<=x)lo=m;else hi=m}const f=(x-cum[lo])/((cum[hi]-cum[lo])||1);return[pts[lo][0]+(pts[hi][0]-pts[lo][0])*f,pts[lo][1]+(pts[hi][1]-pts[lo][1])*f]};
+  // change of direction across a bend from x0 to x1, measured over 20 m either side; + is to the right
+  const turn=(x0,x1)=>{const t=brg(pAt(x1),pAt(x1+20))-brg(pAt(x0-20),pAt(x0));return((t%360)+540)%360-180};
+  const word=a=>{const A=Math.abs(a),s=a<0?'left':'right';return A>=160?'Turn around':A>=120?'Sharp '+s:A>=65?'Turn '+s:'Slight '+s};
+  // a bend drawn with several points counts once: points within 30 m turning the same way make one turn
+  const out=[];let g=null;
+  const flush=()=>{if(!g)return;const a=turn(g.x0,g.x1);if(Math.abs(a)>=45)out.push({x:g.xm,i:g.im,f:0,t:word(a),k:1,a});g=null};
+  for(let i=1;i<N-1;i++){const x=cum[i];if(x<25||x>D-25)continue;const a=turn(x,x);if(Math.abs(a)<20)continue; // a smooth bend is several gentle points: they add up below
+    if(g&&x-g.x1<=30&&Math.sign(a)===Math.sign(g.a)){g.x1=x;if(Math.abs(a)>Math.abs(g.am)){g.am=a;g.xm=x;g.im=i}}else{flush();g={x0:x,x1:x,xm:x,im:i,a,am:a}}}
+  flush();
+  // a little jog (a slight left then straight back right within 45 m, as where a path crosses a street a few metres over) is not worth a call
+  for(let j=0;j+1<out.length;j++){const c=out[j],n=out[j+1];if(n.x-c.x<45&&Math.sign(c.a)!==Math.sign(n.a)&&Math.abs(c.a+n.a)<35&&Math.abs(c.a)<65&&Math.abs(n.a)<65){out.splice(j,2);j--}}
+  // named points on the route: an instruction replaces the turn it describes (or adds one); a place is said on arrival
+  (named||[]).forEach(([la,lo,t])=>{const p=routeProj(pts,[la,lo]);if(p.d>40)return;const x=cum[p.i]+p.f*(cum[p.i+1]-cum[p.i]);if(x<25||x>D-25)return;
+    if(TURNISH.test(t)){const near=out.filter(c=>c.k&&Math.abs(c.x-x)<40).sort((a,b)=>Math.abs(a.x-x)-Math.abs(b.x-x))[0];if(near){near.t=t;return}out.push({x,i:p.i,f:p.f,t,k:1})}
+    else out.push({x,i:p.i,f:p.f,t,k:0})});
+  out.sort((a,b)=>a.x-b.x);
+  return out.filter((c,j)=>!j||c.x-out[j-1].x>=10||c.k!==out[j-1].k).map(c=>[c.i,+c.f.toFixed(3),c.t,c.k])}
+function addRoute(text,fname){const r=parseGpx(text,fname);if(r.err){toast(r.err);return null}
+  S.routes=S.routes||{};const d=Math.round(routeCum(r.pts).pop());
+  // the same route shared again replaces the old copy
+  const old=Object.values(S.routes).find(x=>x.name===r.name&&Math.abs(x.d-d)<30),id=old?old.id:'r'+Date.now().toString(36);
+  S.routes[id]={id,name:r.name,d,pts:r.pts,cues:r.cues,t:Date.now()};
+  const all=Object.values(S.routes).sort((a,b)=>b.t-a.t);all.slice(20).forEach(x=>delete S.routes[x.id]); // keep the 20 newest
+  save();return id}
+function importRoute(){if(navOK()&&Android.pickRoute){Android.pickRoute();return}
+  if(NATIVE){toast('Update Tripace Pro to add routes: see Settings');return}
+  const inp=document.createElement('input');inp.type='file';inp.accept='.gpx,application/gpx+xml';
+  inp.onchange=()=>{const f=inp.files&&inp.files[0];if(!f)return;f.text().then(t=>window.onRouteFile(f.name,t)).catch(()=>toast('Could not open that file'))};inp.click()}
+window.onRouteFile=(name,text)=>{const id=addRoute(text,name),pf=ui.pickFor;ui.pickFor=null;if(!id){if(!ui.draft&&!ui.live)render();return}const R=S.routes[id];
+  if(ui.live||ui.draft){toast('Route saved: '+R.name);return}
+  if(pf&&ui.sheet===pf){const{w}=findW(pf);if(w){w.route=id;ui.routePick=null;save();toast('Route added: '+R.name);render();return}}
+  ui.newRoute=id;ui.sheet=null;ui.logging=null;ui.routePick=null;ui.tab='today';ui.day=null;window.scrollTo(0,0);toast('Route saved: '+R.name);render()};
+// Google encoded polyline (5 decimals), as Run Atlas's "Open in Tripace Pro" link carries the route
+function decodePoly(s){const out=[];let i=0,la=0,lo=0;const num=()=>{let r=0,sh=0,b;do{b=s.charCodeAt(i++)-63;r|=(b&31)<<sh;sh+=5}while(b>=32&&i<=s.length);return r&1?~(r>>1):r>>1};
+  while(i<s.length){la+=num();lo+=num();out.push([la/1e5,lo/1e5])}return out}
+// the same route as a GPX file, so a link and a file go through one importer
+function polyGpx(name,s){const x=t=>String(t).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  return'<?xml version="1.0" encoding="UTF-8"?><gpx version="1.1" creator="Run Atlas" xmlns="http://www.topografix.com/GPX/1/1"><trk><name>'+x(name||'Run Atlas route')+'</name><trkseg>'+decodePoly(String(s||'')).map(q=>'<trkpt lat="'+q[0]+'" lon="'+q[1]+'"/>').join('')+'</trkseg></trk></gpx>'}
+window.onRouteReady=()=>{let o=null;try{const s=Android.takeRoute();o=s?JSON.parse(s):null}catch(e){}if(!o)return;if(o.err){toast(o.err);return}
+  if(o.poly){window.onRouteFile(o.name||'',polyGpx(o.name,o.poly));return}window.onRouteFile(o.name||'',o.text||'')};
+// run and ride workouts in the next week that a new route could go on
+function routeTargets(){const t=today(),end=addDays(t,6),out=[];
+  if(S.plan)S.plan.weeks.forEach((wk,i)=>wk.w.forEach(w=>{const d=addDays(wkStart(i),w.d);if(d>=t&&d<=end&&routeOK(w)&&!S.log[w.id])out.push({w,wk,d})}));
+  (S.solo||[]).forEach(w=>{if(w.date>=t&&w.date<=end&&routeOK(w)&&!S.log[w.id])out.push({w,wk:SOLO_WK,d:w.date})});
+  return out.sort((a,b)=>a.d<b.d?-1:1).slice(0,4)}
+function routePanel(w,p){const R=routeOf(w),list=Object.values(S.routes||{}).sort((a,b)=>b.t-a.t);
+  if(ui.routePick===w.id)return`<div class="stack"><span class="label">Choose a route</span>${list.map(r=>`<button class="btn line block" data-act="routeSet" data-v="${r.id}" style="text-align:left">${esc(r.name)} <span class="muted">· ${fmtDist(r.d/1000,p)}</span></button>`).join('')}
+    <div class="row"><button class="btn grow" data-act="routeImport">Import a GPX file</button><button class="btn ghost" data-act="routePick" data-v="">Cancel</button></div><span class="muted small">Make a route in Run Atlas and share it to Tripace Pro, or pick any .gpx file.</span></div>`;
+  if(R){const n=routeTurns(R);return`<div class="stack"><span class="label">Route</span><p><strong>${esc(R.name)}</strong> · ${fmtDist(R.d/1000,p)} · ${n?n+' turn'+(n>1?'s':'')+' called out':'no turns'}</p>
+    <span class="muted small">${navOK()?'Start with GPS and Tripace Pro calls out each turn and tells you if you leave the route. Found something better? Tap End route while you run and the workout carries on without it.':NATIVE?'Update Tripace Pro (see Settings) for spoken turn-by-turn directions.':'Spoken turn-by-turn directions work in the Android app.'}</span>
+    <div class="row"><button class="btn ghost grow" data-act="routePick" data-v="1">Change route</button><button class="btn ghost grow" data-act="routeOff">Remove route</button></div></div>`}
+  return`<button class="btn line block" data-act="routePick" data-v="1">Add a route</button>`}
+// what the route is doing, for the live screen
+function navTxt(n,p){if(!n)return'';const D=m=>m<320?(p.units==='mi'?Math.max(50,Math.round(m*3.28084/50)*50)+' ft':Math.max(10,Math.round(m/10)*10)+' m'):fmtDist(m/1000,p);
+  return{join:'Head to your route · '+D(n.off)+' away',off:'Off route · '+D(n.off)+' away',done:'End of route',ended:'Route ended'}[n.st]
+    ||(n.next?n.next+' in '+D(n.in):'Follow the route · '+D(Math.max(0,n.tot-n.along))+' to the end')}
 function finishLive(){const p=S.profile,id=ui.live.id,LS=ui.live.steps,TR=ui.live.trainer;let st={};try{st=JSON.parse(Android.stop())}catch(e){}
   // how the pace actually held compares with the target, over the hard run steps only
   const rr=(st.steps||[]).map(a=>{const s=LS[a[0]];return s&&s.sp==='r'&&s.lo>0&&s.hi>0&&a[2]>=60&&a[1]>0?(a[1]/a[2])/((s.lo+s.hi)/2):0}).filter(x=>x>.7&&x<1.3),pr=rr.length?rr.reduce((a,b)=>a+b,0)/rr.length:0;
@@ -1458,9 +1563,10 @@ function finishLive(){const p=S.profile,id=ui.live.id,LS=ui.live.steps,TR=ui.liv
   if(st.ahr>0)ui.logging.note=(ui.logging.note?ui.logging.note+' · ':'')+'average HR '+Math.round(st.ahr)+' bpm'}
 function renderLive(){const el=$('#live');if(!ui.live){el.hidden=true;liveKey='';return}
   const L=ui.live,st=L.st||{},p=S.profile,um=KM(p)*1000,n=L.steps.length,i=clamp(st.idx||0,0,n-1),s=L.steps[i],nx=L.steps[i+1],isRun=s.sp==='r',fin=!!st.finished,v=st.speed||0;
-  const tr=!!L.trainer&&!isRun,hrMain=!tr&&s.hrHi>0&&!fin,hrOn=!!L.hrm,key=[i,!!st.paused,fin,!!L.confirm].join();
+  const tr=!!L.trainer&&!isRun,hrMain=!tr&&s.hrHi>0&&!fin,hrOn=!!L.hrm,nv=st.nav||null,navOn=!!nv&&['join','on','off'].includes(nv.st),key=[i,!!st.paused,fin,!!L.confirm,nv?nv.st:''].join();
   if(key!==liveKey){liveKey=key;el.hidden=false;el.innerHTML=`<div class="lv c-${isRun?'run':'bike'}">
     <div class="stack" style="gap:4px"><span class="label" style="color:var(--c)">${fin?'All steps done':s.open?'No targets':'Step '+(i+1)+' of '+n}${st.paused?' · paused':''}</span><h1>${fin?'Workout complete':esc(s.name)}</h1><p class="muted">${fin?'Keep moving to cool down, then finish.':esc(s.target||'By feel')}</p></div>
+    ${nv?`<div class="row" style="background:${nv.st==='off'?'var(--warn)':'var(--chip)'};color:${nv.st==='off'?'var(--bg)':'inherit'};border-radius:12px;padding:10px 12px;gap:10px"><strong class="grow" id="lv-nav"></strong>${navOn?'<button class="chip" data-act="navEnd">End route</button>':''}</div>`:''}
     <div class="lvbig"><div><span class="label">${fin||s.open?'Total time':s.m?'Distance left':'Time left'}</span><div class="num" id="lv-rem"></div>${s.m&&!fin?'<span class="muted small" id="lv-step"></span>':''}</div><div><span class="label">${tr?'Power, watts':hrMain?'Heart rate':isRun?'Pace /'+p.units:'Speed '+p.units+'/h'}</span><div class="num" id="lv-cur"></div><span class="pill" id="lv-state"></span></div></div>
     <div class="stats"${hrOn?' style="grid-template-columns:repeat(2,1fr)"':''}><div><div class="num" id="lv-dist"></div><span class="label">${p.units==='mi'?'Miles':'Km'}</span></div><div><div class="num" id="lv-time"></div><span class="label">Elapsed</span></div><div><div class="num" id="lv-avg"></div><span class="label">${tr?'Cadence':'Average'}</span></div>${hrOn?`<div><div class="num" id="lv-hr"></div><span class="label">${hrMain?(isRun?'Pace':'Speed'):'Heart rate'}</span></div>`:''}</div>
     <p class="muted small" id="lv-gps"></p>${hrOn?'<p class="muted small" id="lv-hrs" style="margin-top:-6px"></p>':''}${nx&&!fin?`<p class="muted"><strong>Next:</strong> ${esc(nx.name)} · ${nx.m?fmtRun(nx.m/1000,p):fmtStep(nx.sec/60)}${nx.target?' · '+esc(nx.target):''}</p>`:''}
@@ -1472,7 +1578,7 @@ function renderLive(){const el=$('#live');if(!ui.live){el.hidden=true;liveKey=''
   const fmtV=x=>x>0.4?(isRun?fmtT(um/x):(x*3.6/KM(p)).toFixed(1)):'–';
   const left=Math.max(0,s.m-(st.stepDist||0));
   set('lv-rem',fin||s.open?fmtT(st.elapsed||0):s.m?(s.m<1500||left<1000?Math.round(left)+' m':fmtDist(left/1000,p)):fmtT(Math.max(0,s.sec-(st.stepElapsed||0))));
-  set('lv-step',!fin&&s.m?'This step '+fmtT(st.stepElapsed||0):'');
+  set('lv-step',!fin&&s.m?'This step '+fmtT(st.stepElapsed||0):'');if(nv)set('lv-nav',navTxt(nv,p));
   const bpm=st.hr>0?String(st.hr):'–';
   set('lv-cur',tr?(st.power>=0?String(st.power):'–'):hrMain?bpm:fmtV(v));if(hrOn){set('lv-hr',hrMain?fmtV(v):bpm);set('lv-hrs',hrMsg(st))}set('lv-bias',st.bias&&Math.abs(st.bias-1)>.01?'Intensity '+Math.round(st.bias*100)+'%':'');
   const stEl=$('#lv-state');if(stEl){let t='',c='var(--chip)',strong=false;if(tr&&!fin&&st.tw>0)t='Target '+st.tw+' W';
@@ -1509,6 +1615,7 @@ if(S.profile)derive(S.profile);
 if(NATIVE){const sv=lsGet('tripace.live',null);try{const st=JSON.parse(Android.poll());if(st.run&&sv&&sv.id===st.id){ui.live={id:sv.id,steps:sv.steps,st,confirm:false,indoor:!!sv.indoor,trainer:!!sv.trainer,hrm:!!sv.hrm};startPoll()}}catch(e){}}
 render();initSync();
 if(NATIVE)setTimeout(()=>stravaCheck(false),2500);
+if(navOK()&&Android.takeRoute)setTimeout(window.onRouteReady,400); /* opened by sharing a route to the app */
 try{if(window.Android&&Android.ready)Android.ready()}catch(e){} /* tells the app this version starts cleanly; one that never does is rolled back */
 </script>
 </body></html>
